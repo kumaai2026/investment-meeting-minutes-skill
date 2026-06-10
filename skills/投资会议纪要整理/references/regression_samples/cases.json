@@ -1,0 +1,40 @@
+{
+  "cases": [
+    {
+      "name": "文本-only 样例",
+      "mode": "text_only",
+      "file": "text_only.md",
+      "required_terms": ["中芯国际", "订单能见度改善", "没有加仓"]
+    },
+    {
+      "name": "音频转写-only 样例",
+      "mode": "audio_only",
+      "file": "audio_only.md",
+      "required_terms": ["北美算力", "15万元一吨", "十七八倍"]
+    },
+    {
+      "name": "音频+文稿 样例",
+      "mode": "audio_text",
+      "file": "audio_text.md",
+      "required_terms": ["光模块", "800G", "存疑：英伟达供货节奏"]
+    },
+    {
+      "name": "多人复盘会类型样例",
+      "mode": "meeting_type_review",
+      "file": "review_meeting.md",
+      "required_terms": ["多人复盘会", "真实顺序", "中际旭创", "我今天还是围绕", "我没有减仓", "不想改成别的说法"]
+    },
+    {
+      "name": "上市公司交流类型样例",
+      "mode": "meeting_type_listed_company",
+      "file": "listed_company.md",
+      "required_terms": ["上市公司交流", "单家公司交流", "公司经营"]
+    },
+    {
+      "name": "专家交流类型样例",
+      "mode": "meeting_type_expert_call",
+      "file": "expert_call.md",
+      "required_terms": ["专家交流", "问答线索", "中芯国际"]
+    }
+  ]
+}

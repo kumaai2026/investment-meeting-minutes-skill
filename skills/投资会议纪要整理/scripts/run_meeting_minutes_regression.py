@@ -1,0 +1,72 @@
+#!/usr/bin/env python3
+"""Run fixed local regression checks for the meeting-minutes contract."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+from typing import Any
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+SKILL_DIR = SCRIPT_DIR.parent
+DEFAULT_CASES_PATH = SKILL_DIR / "references/regression_samples/cases.json"
+
+sys.path.insert(0, str(SCRIPT_DIR))
+from validate_meeting_minutes_contract import validate_contract  # noqa: E402
+
+
+def read_cases(path: Path) -> list[dict[str, Any]]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    cases = payload.get("cases")
+    if not isinstance(cases, list):
+        raise ValueError(f"回归样例格式错误: {path}")
+    return cases
+
+
+def run_case(case: dict[str, Any], base_dir: Path) -> dict[str, Any]:
+    file_path = base_dir / str(case["file"])
+    markdown = file_path.read_text(encoding="utf-8")
+    result = validate_contract(markdown, required_terms=[str(term) for term in case.get("required_terms", [])])
+    return {
+        "name": case.get("name") or file_path.stem,
+        "mode": case.get("mode") or "",
+        "file": str(file_path),
+        **result,
+    }
+
+
+def print_text(results: list[dict[str, Any]]) -> None:
+    for result in results:
+        status = "OK" if result["ok"] else "FAIL"
+        print(f"[{status}] {result['name']} ({result['mode']})")
+        for warning in result["warnings"]:
+            print(f"  warning: {warning}")
+        for error in result["errors"]:
+            print(f"  error: {error}")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="运行会议纪要固定回归样例")
+    parser.add_argument("--cases", default=str(DEFAULT_CASES_PATH), help="回归样例 cases.json")
+    parser.add_argument("--json", action="store_true", help="输出 JSON")
+    args = parser.parse_args()
+
+    cases_path = Path(args.cases).expanduser()
+    base_dir = cases_path.parent
+    results = [run_case(case, base_dir) for case in read_cases(cases_path)]
+    payload = {
+        "ok": all(result["ok"] for result in results),
+        "case_count": len(results),
+        "results": results,
+    }
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+    else:
+        print_text(results)
+    return 0 if payload["ok"] else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

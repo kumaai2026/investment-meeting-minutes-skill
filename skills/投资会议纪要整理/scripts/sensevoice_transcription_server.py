@@ -1,0 +1,243 @@
+#!/usr/bin/env python3
+"""Tiny local HTTP bridge for Dify -> SenseVoice transcription with optional Nano cross-check."""
+
+from __future__ import annotations
+
+import cgi
+import difflib
+import json
+import os
+import subprocess
+import sys
+import tempfile
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+
+DEFAULT_HOST = "0.0.0.0"
+DEFAULT_PORT = 8765
+SCRIPT_DIR = Path(__file__).resolve().parent
+TRANSCRIBE_SCRIPT = SCRIPT_DIR / "transcribe_audio.py"
+LOG_DIR = Path("/Users/kumaai/Library/Logs/kumaai-sync")
+DEFAULT_PRIMARY_ENGINE = "sensevoice"
+DEFAULT_PRIMARY_MODEL = "iic/SenseVoiceSmall"
+DEFAULT_AUX_ENGINE = os.environ.get("SENSEVOICE_BRIDGE_AUX_ENGINE", "fun-asr-nano")
+DEFAULT_NANO_MODEL = "FunAudioLLM/Fun-ASR-Nano-2512"
+DEFAULT_NANO_HUB = os.environ.get("FUNASR_NANO_HUB", "ms")
+DEFAULT_MODEL_CACHE = os.environ.get(
+    "FUNASR_MODEL_CACHE",
+    "/Users/kumaai/Documents/Codex/workspace/投资纪要工作流/03 Resources/asr-model-cache",
+)
+DEFAULT_NANO_PYTHON = os.environ.get(
+    "FUNASR_NANO_PYTHON",
+    "/Users/kumaai/Documents/Codex/workspace/投资纪要工作流/03 Resources/asr-runtimes/funasr-nano-venv/bin/python",
+)
+DEFAULT_HOTWORDS = (
+    "半导体,算力,AI眼镜,液冷,CPO,PCB,光模块,光芯片,东田微,依米康,"
+    "信测标准,中芯国际,中微公司,工业富联,北方华创,中际旭创,胜蓝股份"
+)
+
+
+def _json_response(handler: BaseHTTPRequestHandler, status: int, payload: dict) -> None:
+    data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    handler.send_response(status)
+    handler.send_header("Content-Type", "application/json; charset=utf-8")
+    handler.send_header("Content-Length", str(len(data)))
+    handler.end_headers()
+    handler.wfile.write(data)
+
+
+def _clean_filename(filename: str | None) -> str:
+    if not filename:
+        return "audio_upload"
+    keep = []
+    for char in filename:
+        keep.append(char if char.isalnum() or char in ".-_ " else "_")
+    return "".join(keep).strip() or "audio_upload"
+
+
+def _field_text(form: cgi.FieldStorage, key: str, default: str = "") -> str:
+    if key not in form:
+        return default
+    value = form.getvalue(key)
+    if isinstance(value, list):
+        value = value[0] if value else default
+    return str(value or default).strip()
+
+
+def _read_latest_txt(output_dir: Path, stem: str) -> str:
+    text_path = output_dir / f"{stem}.txt"
+    if not text_path.exists():
+        candidates = sorted(output_dir.glob("*.txt"), key=lambda item: item.stat().st_mtime, reverse=True)
+        text_path = candidates[0] if candidates else text_path
+    return text_path.read_text(encoding="utf-8", errors="replace").strip() if text_path.exists() else ""
+
+
+def _run_transcribe(command: list[str], output_dir: Path, stem: str, timeout: int = 7200) -> tuple[bool, str, str]:
+    env = dict(os.environ)
+    env.setdefault("PYTHONUTF8", "1")
+    env.setdefault("PYTHONIOENCODING", "utf-8")
+    completed = subprocess.run(command, text=True, capture_output=True, env=env, timeout=timeout)
+    text = _read_latest_txt(output_dir, stem)
+    error = ""
+    if completed.returncode != 0:
+        error = (completed.stderr or completed.stdout or "transcription failed").strip()
+    return completed.returncode == 0, text, error
+
+
+def _diff_summary(primary_text: str, auxiliary_text: str, limit: int = 5000) -> str:
+    if not primary_text or not auxiliary_text:
+        return ""
+    diff = difflib.unified_diff(
+        primary_text.splitlines() or [primary_text],
+        auxiliary_text.splitlines() or [auxiliary_text],
+        fromfile="sensevoice",
+        tofile="fun-asr-nano",
+        lineterm="",
+    )
+    text = "\n".join(diff).strip()
+    if len(text) > limit:
+        text = text[:limit].rstrip() + "\n...（差异过长，已截断）"
+    return text
+
+
+class SenseVoiceHandler(BaseHTTPRequestHandler):
+    server_version = "SenseVoiceBridge/1.0"
+
+    def log_message(self, fmt: str, *args) -> None:
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
+        with (LOG_DIR / "sensevoice-transcription-server.log").open("a", encoding="utf-8") as handle:
+            handle.write("%s - %s\n" % (self.log_date_time_string(), fmt % args))
+
+    def do_GET(self) -> None:
+        if self.path.rstrip("/") == "/health":
+            _json_response(
+                self,
+                200,
+                {
+                    "ok": True,
+                    "engine": DEFAULT_PRIMARY_ENGINE,
+                    "model": DEFAULT_PRIMARY_MODEL,
+                    "primary_engine": DEFAULT_PRIMARY_ENGINE,
+                    "primary_model": DEFAULT_PRIMARY_MODEL,
+                    "auxiliary_engine": DEFAULT_AUX_ENGINE,
+                    "auxiliary_model": DEFAULT_NANO_MODEL if DEFAULT_AUX_ENGINE == "fun-asr-nano" else "",
+                },
+            )
+            return
+        _json_response(self, 404, {"ok": False, "error": "not found"})
+
+    def do_POST(self) -> None:
+        if self.path.rstrip("/") != "/transcribe":
+            _json_response(self, 404, {"ok": False, "error": "not found"})
+            return
+
+        content_type = self.headers.get("Content-Type", "")
+        if "multipart/form-data" not in content_type:
+            _json_response(self, 400, {"ok": False, "error": "multipart/form-data required", "text": ""})
+            return
+
+        form = cgi.FieldStorage(fp=self.rfile, headers=self.headers, environ={"REQUEST_METHOD": "POST"})
+        file_item = form["audio"] if "audio" in form else None
+        if file_item is None or not getattr(file_item, "filename", None):
+            _json_response(self, 200, {"ok": True, "engine": "sensevoice", "model": DEFAULT_PRIMARY_MODEL, "text": ""})
+            return
+
+        filename = _clean_filename(file_item.filename)
+        suffix = Path(filename).suffix or ".audio"
+        aux_engine = _field_text(form, "aux_engine", DEFAULT_AUX_ENGINE).lower()
+        hotwords = _field_text(form, "hotwords", DEFAULT_HOTWORDS)
+        with tempfile.TemporaryDirectory(prefix="sensevoice-dify-") as tmp:
+            tmp_dir = Path(tmp)
+            audio_path = tmp_dir / f"input{suffix}"
+            audio_path.write_bytes(file_item.file.read())
+            primary_dir = tmp_dir / "primary"
+            auxiliary_dir = tmp_dir / "auxiliary"
+            primary_dir.mkdir()
+            auxiliary_dir.mkdir()
+
+            command = [
+                sys.executable,
+                str(TRANSCRIBE_SCRIPT),
+                str(audio_path),
+                "--engine",
+                "sensevoice",
+                "--output-dir",
+                str(primary_dir),
+                "--output-format",
+                "txt",
+                "--language",
+                "zh",
+            ]
+            if DEFAULT_MODEL_CACHE:
+                command.extend(["--cache-dir", DEFAULT_MODEL_CACHE])
+            primary_ok, text, primary_error = _run_transcribe(command, primary_dir, "input")
+            payload = {
+                "ok": primary_ok,
+                "engine": "sensevoice",
+                "model": DEFAULT_PRIMARY_MODEL,
+                "primary_engine": "sensevoice",
+                "primary_model": DEFAULT_PRIMARY_MODEL,
+                "filename": filename,
+                "text": text,
+            }
+            if not primary_ok:
+                payload["error"] = primary_error or "SenseVoice transcription failed"
+                _json_response(self, 500, payload)
+                return
+
+            if aux_engine in {"fun-asr-nano", "nano", "funasr-nano"}:
+                auxiliary_command = [
+                    DEFAULT_NANO_PYTHON if Path(DEFAULT_NANO_PYTHON).exists() else sys.executable,
+                    str(TRANSCRIBE_SCRIPT),
+                    str(audio_path),
+                    "--engine",
+                    "fun-asr-nano",
+                    "--output-dir",
+                    str(auxiliary_dir),
+                    "--output-format",
+                    "txt",
+                    "--language",
+                    "中文",
+                    "--nano-model",
+                    DEFAULT_NANO_MODEL,
+                    "--nano-hub",
+                    DEFAULT_NANO_HUB,
+                    "--hotwords",
+                    hotwords,
+                ]
+                if DEFAULT_MODEL_CACHE:
+                    auxiliary_command.extend(["--cache-dir", DEFAULT_MODEL_CACHE])
+                auxiliary_ok, auxiliary_text, auxiliary_error = _run_transcribe(auxiliary_command, auxiliary_dir, "input")
+                payload.update(
+                    {
+                        "auxiliary_engine": "fun-asr-nano",
+                        "auxiliary_model": DEFAULT_NANO_MODEL,
+                        "auxiliary_ok": auxiliary_ok,
+                        "auxiliary_text": auxiliary_text,
+                        "auxiliary_status": "Fun-ASR-Nano 转录成功" if auxiliary_ok else f"Fun-ASR-Nano 转录失败：{auxiliary_error[:300]}",
+                        "asr_comparison_diff": _diff_summary(text, auxiliary_text),
+                        "auxiliary_transcripts": {
+                            "fun_asr_nano": {
+                                "ok": auxiliary_ok,
+                                "model": DEFAULT_NANO_MODEL,
+                                "hub": DEFAULT_NANO_HUB,
+                                "text": auxiliary_text,
+                                "error": auxiliary_error,
+                            }
+                        },
+                    }
+                )
+            _json_response(self, 200, payload)
+
+
+def main() -> int:
+    host = os.environ.get("SENSEVOICE_BRIDGE_HOST", DEFAULT_HOST)
+    port = int(os.environ.get("SENSEVOICE_BRIDGE_PORT", str(DEFAULT_PORT)))
+    server = ThreadingHTTPServer((host, port), SenseVoiceHandler)
+    print(f"SenseVoice bridge listening on http://{host}:{port}", flush=True)
+    server.serve_forever()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
