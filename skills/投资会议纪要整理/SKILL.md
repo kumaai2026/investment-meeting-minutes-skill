@@ -142,7 +142,7 @@ Non-negotiable rules:
 - Segment by actual speech order first, then by speaker, then by sector/topic, then by symbol.
 - If one speech block mentions multiple symbols, split it into multiple sub-sections.
 - Within a speaker section, start each segment with a bracket tag like `【半导体｜中芯国际(688981.SH)】`. Do not repeat the speaker name inside the segment title.
-- For uncertain words in the original-text section, keep the source wording and mark the doubtful fragment in bold markdown. In Word export, render these doubtful fragments as bold + underline so they are visibly marked.
+- For uncertain words in the original-text section, keep the source wording and mark the doubtful fragment in bold markdown. Immediately after the doubtful fragment, add the corresponding audio time range using `（录音：HH:MM:SS-HH:MM:SS）`; if only paragraph-level or subtitle-level timestamps are available, use the smallest available replayable range and do not invent finer timing. If no audio or usable timestamp exists, write `（录音：无可用时间戳）` and explain why in the ambiguity table. In Word export, render these doubtful fragments as bold + underline so they are visibly marked; the audio time text itself does not need bold or underline.
 
 ### 5. Preserve the speaker's meaning
 
