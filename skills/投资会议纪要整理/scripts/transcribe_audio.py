@@ -40,10 +40,9 @@ FUNASR_NANO_TEXT_FORMATS = {"txt", "json", "all"}
 
 
 def _configure_model_cache(cache_dir: str) -> None:
-    cache_value = (cache_dir or os.environ.get("FUNASR_MODEL_CACHE") or "").strip()
-    if not cache_value:
-        return
+    cache_value = (cache_dir or os.environ.get("FUNASR_MODEL_CACHE") or str(DEFAULT_LOCAL_CACHE)).strip()
     root = Path(cache_value).expanduser().resolve()
+    os.environ.setdefault("FUNASR_MODEL_CACHE", str(root))
     os.environ.setdefault("MODELSCOPE_CACHE", str(root / "modelscope"))
     os.environ.setdefault("HF_HOME", str(root / "huggingface"))
 
@@ -83,13 +82,22 @@ def _model_candidates(model_name: str) -> list[Path]:
     return candidates
 
 
-def _resolve_model_ref(model_name: str) -> str:
+def _resolve_model_ref(model_name: str, *, allow_remote_model_lookup: bool = False) -> str:
     path = Path(model_name).expanduser()
     if path.exists() and _is_complete_model_dir(path, model_name):
         return str(path.resolve())
     for candidate in _model_candidates(model_name):
         if _is_complete_model_dir(candidate, model_name):
             return str(candidate)
+    if not allow_remote_model_lookup:
+        status = _model_cache_status(model_name)
+        checked = ", ".join(str(item) for item in status.get("checked_paths", []) or [])
+        missing = ", ".join(str(item) for item in status.get("missing", []) or [])
+        detail = f"；检查路径: {checked}" if checked else ""
+        missing_detail = f"；缺少: {missing}" if missing else ""
+        raise FileNotFoundError(
+            f"本地模型缓存不完整，已阻止远程模型查找: {model_name}{missing_detail}{detail}"
+        )
     return model_name
 
 
@@ -144,6 +152,12 @@ def _ensure_ffmpeg_in_path(env: dict[str, str]) -> dict[str, str]:
         pass
 
     return env
+
+
+def _ensure_ffmpeg_for_current_process() -> None:
+    env = _ensure_ffmpeg_in_path(dict(os.environ))
+    if env.get("PATH") != os.environ.get("PATH"):
+        os.environ["PATH"] = env["PATH"]
 
 
 def _clean_sensevoice_text(text: str) -> str:
@@ -247,6 +261,7 @@ def _run_sensevoice(
     output_format: str,
     speaker_diarization: bool,
     require_speaker_diarization: bool,
+    allow_remote_model_lookup: bool,
 ) -> int:
     if output_format not in SENSEVOICE_TEXT_FORMATS:
         print(
@@ -255,6 +270,8 @@ def _run_sensevoice(
         )
         return 2
 
+    _ensure_ffmpeg_for_current_process()
+
     try:
         from funasr import AutoModel  # type: ignore
     except Exception as exc:
@@ -262,29 +279,38 @@ def _run_sensevoice(
         return 127
 
     spk_cache_status = _model_cache_status("cam++")
+    use_speaker_diarization = speaker_diarization and bool(spk_cache_status.get("complete"))
     if speaker_diarization and not spk_cache_status.get("complete"):
+        if require_speaker_diarization:
+            print(
+                f"SenseVoice 说话人分离模型 cam++ 本地缓存不完整，缺少 {spk_cache_status.get('missing')}。",
+                file=sys.stderr,
+            )
+            return 1
         print(
             "SenseVoice 说话人分离模型 cam++ 本地缓存不完整，"
-            f"缺少 {spk_cache_status.get('missing')}；将尝试远程模型名，失败则降级纯转录。",
+            f"缺少 {spk_cache_status.get('missing')}；已跳过远程查找并降级为纯转录。",
             file=sys.stderr,
         )
 
     base_model_kwargs: dict[str, object] = {
-        "model": _resolve_model_ref(model_name),
+        "model": _resolve_model_ref(model_name, allow_remote_model_lookup=allow_remote_model_lookup),
         "trust_remote_code": True,
-        "vad_model": _resolve_model_ref("fsmn-vad"),
+        "vad_model": _resolve_model_ref("fsmn-vad", allow_remote_model_lookup=allow_remote_model_lookup),
         "vad_kwargs": {"max_single_segment_time": 30000},
-        "punc_model": _resolve_model_ref("ct-punc"),
+        "punc_model": _resolve_model_ref("ct-punc", allow_remote_model_lookup=allow_remote_model_lookup),
         "device": _select_device("auto"),
         "disable_update": True,
     }
     diarization_enabled = False
     try:
         model_kwargs = dict(base_model_kwargs)
-        if speaker_diarization:
-            model_kwargs.update({"spk_model": _resolve_model_ref("cam++")})
+        if use_speaker_diarization:
+            model_kwargs.update(
+                {"spk_model": _resolve_model_ref("cam++", allow_remote_model_lookup=allow_remote_model_lookup)}
+            )
         model = AutoModel(**model_kwargs)
-        diarization_enabled = speaker_diarization
+        diarization_enabled = use_speaker_diarization
     except (RuntimeError, TypeError, ValueError) as exc:
         if require_speaker_diarization:
             raise
@@ -364,6 +390,7 @@ def _run_funasr_nano(
     hotwords: str,
     device: str,
     use_vad: bool,
+    allow_remote_model_lookup: bool,
 ) -> int:
     if output_format not in FUNASR_NANO_TEXT_FORMATS:
         print(
@@ -371,6 +398,8 @@ def _run_funasr_nano(
             file=sys.stderr,
         )
         return 2
+
+    _ensure_ffmpeg_for_current_process()
 
     try:
         from funasr import AutoModel  # type: ignore
@@ -380,7 +409,7 @@ def _run_funasr_nano(
 
     resolved_device = _select_device(device)
     model_kwargs: dict[str, object] = {
-        "model": _resolve_model_ref(model_name),
+        "model": _resolve_model_ref(model_name, allow_remote_model_lookup=allow_remote_model_lookup),
         "trust_remote_code": True,
         "device": resolved_device,
         "hub": hub,
@@ -389,7 +418,7 @@ def _run_funasr_nano(
     if use_vad:
         model_kwargs.update(
             {
-                "vad_model": _resolve_model_ref("fsmn-vad"),
+                "vad_model": _resolve_model_ref("fsmn-vad", allow_remote_model_lookup=allow_remote_model_lookup),
                 "vad_kwargs": {"max_single_segment_time": 30000},
             }
         )
@@ -565,6 +594,11 @@ def main() -> int:
         action="store_true",
         help="只检查本地 ASR 模型缓存完整性，不执行转录",
     )
+    parser.add_argument(
+        "--allow-remote-model-lookup",
+        action="store_true",
+        help="允许在本地缓存缺失时使用远程模型名；默认关闭，避免每次整理会议纪要时重新下载模型",
+    )
     args = parser.parse_args()
 
     _configure_model_cache(args.cache_dir)
@@ -600,6 +634,7 @@ def main() -> int:
             output_format=args.output_format,
             speaker_diarization=not args.no_speaker_diarization,
             require_speaker_diarization=args.require_speaker_diarization,
+            allow_remote_model_lookup=args.allow_remote_model_lookup,
         )
         if sensevoice_code == 0 or args.engine == "sensevoice":
             return sensevoice_code
@@ -616,6 +651,7 @@ def main() -> int:
             hotwords=args.hotwords,
             device=args.device,
             use_vad=not args.no_vad,
+            allow_remote_model_lookup=args.allow_remote_model_lookup,
         )
 
     return _run_whisper(

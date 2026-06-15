@@ -69,6 +69,7 @@
 - 需要说话人分离失败即报错时使用 `--require-speaker-diarization`。
 - 需要 `vtt`、`srt`、`tsv` 等字幕/时间戳格式时可显式使用 Whisper。
 - 本仓库不打包模型权重或虚拟环境；部署环境应通过 `FUNASR_MODEL_CACHE`、`FUNASR_NANO_PYTHON` 等变量指向本地缓存和运行时。
+- macOS 本地 Dify 转写桥可用 `scripts/start_sensevoice_transcription_server.sh` 启动；对应 LaunchAgent 模板在 `skills/投资会议纪要整理/launchagents/com.kumaai.sensevoice-transcription-server.plist`，会固定本地模型缓存和虚拟环境，避免每次整理会议纪要时重新下载模型。
 
 ## 整理和输出规则
 

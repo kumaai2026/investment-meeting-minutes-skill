@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.kumaai.sensevoice-transcription-server</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/nananaranja/.codex/skills/investment-meeting-minutes/scripts/start_sensevoice_transcription_server.sh</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/Users/nananaranja/Library/Logs/kumaai-sync/sensevoice-transcription-server.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/nananaranja/Library/Logs/kumaai-sync/sensevoice-transcription-server.err.log</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PYTHONUTF8</key>
+    <string>1</string>
+    <key>PYTHONIOENCODING</key>
+    <string>utf-8</string>
+    <key>FUNASR_MODEL_CACHE</key>
+    <string>/Users/nananaranja/Documents/会议纪要整理/.model-cache</string>
+    <key>MODELSCOPE_CACHE</key>
+    <string>/Users/nananaranja/Documents/会议纪要整理/.model-cache/modelscope</string>
+    <key>HF_HOME</key>
+    <string>/Users/nananaranja/Documents/会议纪要整理/.model-cache/huggingface</string>
+    <key>FUNASR_NANO_PYTHON</key>
+    <string>/Users/nananaranja/Documents/会议纪要整理/.transcribe-venv/bin/python</string>
+    <key>SENSEVOICE_BRIDGE_AUX_ENGINE</key>
+    <string>fun-asr-nano</string>
+    <key>KUMAAI_SYNC_LOG_DIR</key>
+    <string>/Users/nananaranja/Library/Logs/kumaai-sync</string>
+    <key>PATH</key>
+    <string>/Users/nananaranja/Documents/会议纪要整理/.transcribe-venv/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+</dict>
+</plist>

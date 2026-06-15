@@ -259,6 +259,9 @@ Use to keep `/Users/kumaai/Documents/Codex/workspace/投资纪要工作流/04 Ar
 ### scripts/sensevoice_transcription_server.py
 Use as the local Dify bridge for audio uploads. It exposes a tiny HTTP endpoint that accepts multipart field `audio`, runs `scripts/transcribe_audio.py --engine sensevoice`, and returns JSON with `text`, `engine`, and `model`.
 
+### scripts/start_sensevoice_transcription_server.sh
+Use to start the local SenseVoice/FunASR transcription bridge with stable local cache environment variables. It sets `FUNASR_MODEL_CACHE`, `MODELSCOPE_CACHE`, `HF_HOME`, `FUNASR_NANO_PYTHON`, UTF-8 settings, and PATH before running `sensevoice_transcription_server.py`. The macOS LaunchAgent template under `launchagents/com.kumaai.sensevoice-transcription-server.plist` uses this script so Dify can call `http://host.docker.internal:8765/transcribe` without triggering model downloads on each meeting.
+
 ### scripts/transcribe_audio.py
 Use to transcribe local audio when ASR tooling is available. It standardizes SenseVoice/FunASR transcription first, supports explicit `--engine fun-asr-nano` for Fun-ASR-Nano-2512 auxiliary comparison, and keeps Whisper fallback for missing dependencies or timestamp output formats.
 

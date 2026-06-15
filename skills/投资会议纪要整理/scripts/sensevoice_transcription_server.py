@@ -40,6 +40,7 @@ LOG_DIR = Path(os.environ.get("KUMAAI_SYNC_LOG_DIR", str(Path.home() / "Library/
 MODEL_REQUIREMENTS = {
     "sensevoice": ("iic/SenseVoiceSmall", ("config.yaml", "model.pt")),
     "vad": ("iic/speech_fsmn_vad_zh-cn-16k-common-pytorch", ("config.yaml", "model.pt")),
+    "punc": ("iic/punc_ct-transformer_cn-en-common-vocab471067-large", ("config.yaml", "model.pt")),
     "speaker_diarization": ("iic/speech_campplus_sv_zh-cn_16k-common", ("config.yaml", "campplus_cn_common.bin")),
     "fun_asr_nano": ("FunAudioLLM/Fun-ASR-Nano-2512", ("configuration.json",)),
 }
@@ -122,6 +123,9 @@ def _run_transcribe(command: list[str], output_dir: Path, stem: str, timeout: in
     env = dict(os.environ)
     env.setdefault("PYTHONUTF8", "1")
     env.setdefault("PYTHONIOENCODING", "utf-8")
+    env.setdefault("FUNASR_MODEL_CACHE", DEFAULT_MODEL_CACHE)
+    env.setdefault("MODELSCOPE_CACHE", str(Path(DEFAULT_MODEL_CACHE).expanduser() / "modelscope"))
+    env.setdefault("HF_HOME", str(Path(DEFAULT_MODEL_CACHE).expanduser() / "huggingface"))
     completed = subprocess.run(command, text=True, capture_output=True, env=env, timeout=timeout)
     text = _read_latest_txt(output_dir, stem)
     error = ""
