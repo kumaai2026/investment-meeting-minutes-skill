@@ -62,10 +62,12 @@
 - 默认入口是 `scripts/transcribe_audio.py`。
 - `--engine auto` 优先使用 SenseVoice/FunASR；本地不可用时才降级到 Whisper。
 - SenseVoice 默认模型为 `iic/SenseVoiceSmall`，默认语言为 `zh`。
-- 默认尝试 cam++ 说话人分离，并输出带说话人标签的文本；`--output-format json|all` 会额外生成句级 JSON。
-- VAD 默认使用 `fsmn-vad`，标点模型使用 `ct-punc`。
-- 辅助模型为 `FunAudioLLM/Fun-ASR-Nano-2512`，用于对照校正，不自动覆盖主转写。
-- 需要关闭说话人分离时使用 `--no-speaker-diarization`。
+- 默认使用纯 SenseVoice 作为主转写和存疑时间戳来源，不强制挂 cam++ 或 VAD。
+- `--output-format json|all` 会额外生成带时间锚点的 JSON；优先使用 SenseVoice 直接时间戳。
+- cam++ 说话人分离和 `fsmn-vad` 只在显式需要区分发言人或分段时启用。
+- 辅助模型保留为 `FunAudioLLM/Fun-ASR-Nano-2512`，用于对照校正公司名、金融术语、数字和英文缩写，不自动覆盖主转写。
+- 需要区分发言人时使用 `--speaker-diarization`。
+- 需要启用 SenseVoice VAD 分段时使用 `--sensevoice-vad`。
 - 需要说话人分离失败即报错时使用 `--require-speaker-diarization`。
 - 需要 `vtt`、`srt`、`tsv` 等字幕/时间戳格式时可显式使用 Whisper。
 - 本仓库不打包模型权重或虚拟环境；部署环境应通过 `FUNASR_MODEL_CACHE`、`FUNASR_NANO_PYTHON` 等变量指向本地缓存和运行时。

@@ -223,7 +223,8 @@ class SenseVoiceHandler(BaseHTTPRequestHandler):
                 command.extend(["--cache-dir", DEFAULT_MODEL_CACHE])
             primary_ok, text, primary_error = _run_transcribe(command, primary_dir, "input")
             primary_json = _read_latest_json(primary_dir, "input")
-            speaker_segments = primary_json.get("sentence_info") if isinstance(primary_json.get("sentence_info"), list) else []
+            timestamp_segments = primary_json.get("sentence_info") if isinstance(primary_json.get("sentence_info"), list) else []
+            speaker_segments = [item for item in timestamp_segments if isinstance(item, dict) and item.get("speaker")]
             payload = {
                 "ok": primary_ok,
                 "engine": "sensevoice",
@@ -234,9 +235,11 @@ class SenseVoiceHandler(BaseHTTPRequestHandler):
                 "text": text,
                 "speaker_diarization_enabled": bool(primary_json.get("speaker_diarization_enabled")),
                 "speaker_diarization_detected": bool(primary_json.get("speaker_diarization_detected")),
+                "timestamp_detected": bool(primary_json.get("timestamp_detected")),
                 "speakers": primary_json.get("speakers") or [],
                 "speaker_segments": speaker_segments,
-                "sentence_info": speaker_segments,
+                "timestamp_segments": timestamp_segments,
+                "sentence_info": timestamp_segments,
             }
             if not primary_ok:
                 payload["error"] = primary_error or "SenseVoice transcription failed"

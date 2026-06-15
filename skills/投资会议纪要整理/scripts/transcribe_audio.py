@@ -202,28 +202,120 @@ def _ms_to_timestamp(value: object) -> str:
     return f"{minutes:02d}:{seconds:02d}.{millis:03d}"
 
 
+def _timestamp_pair_ms(value: object) -> tuple[object, object] | None:
+    if isinstance(value, dict):
+        start = value.get("start", value.get("start_ms", value.get("begin")))
+        end = value.get("end", value.get("end_ms", value.get("finish")))
+        if start is not None and end is not None:
+            return start, end
+    if isinstance(value, (list, tuple)) and len(value) >= 2:
+        return value[0], value[1]
+    return None
+
+
+def _split_sentence_spans(text: str) -> list[tuple[int, int, str]]:
+    spans: list[tuple[int, int, str]] = []
+    start = 0
+    for match in re.finditer(r"[^。！？!?；;\n]+[。！？!?；;]?", text):
+        sentence = match.group(0).strip()
+        if not sentence:
+            continue
+        spans.append((match.start(), match.end(), sentence))
+        start = match.end()
+    tail = text[start:].strip()
+    if tail:
+        spans.append((start, len(text), tail))
+    return spans or [(0, len(text), text)] if text else []
+
+
+def _segment_from_time_range(
+    *,
+    text: str,
+    start_ms: object,
+    end_ms: object,
+    speaker: object = "",
+    source: str,
+) -> dict[str, object]:
+    return {
+        "speaker": _speaker_label(speaker) if str(speaker or "").strip() else "",
+        "speaker_id": speaker if str(speaker or "").strip() else "",
+        "start_ms": start_ms,
+        "end_ms": end_ms,
+        "start": _ms_to_timestamp(start_ms),
+        "end": _ms_to_timestamp(end_ms),
+        "text": text,
+        "source": source,
+    }
+
+
 def _extract_sentence_info(result: object) -> list[dict[str, object]]:
     chunks = result if isinstance(result, list) else [result]
     sentences: list[dict[str, object]] = []
     for chunk in chunks:
         if not isinstance(chunk, dict):
             continue
+        chunk_sentences: list[dict[str, object]] = []
         for item in chunk.get("sentence_info") or []:
             if not isinstance(item, dict):
                 continue
             text = _clean_sensevoice_text(str(item.get("text") or item.get("sentence") or ""))
             if not text:
                 continue
+            chunk_sentences.append(
+                _segment_from_time_range(
+                    text=text,
+                    start_ms=item.get("start", ""),
+                    end_ms=item.get("end", ""),
+                    speaker=item.get("spk", ""),
+                    source="sentence_info",
+                )
+            )
+        if chunk_sentences:
+            sentences.extend(chunk_sentences)
+            continue
+
+        text = _clean_sensevoice_text(str(chunk.get("text") or ""))
+        timestamp = chunk.get("timestamp")
+        timestamp_pairs = [
+            pair
+            for pair in (_timestamp_pair_ms(item) for item in timestamp or [])
+            if pair is not None
+        ]
+        if text and timestamp_pairs:
+            spans = _split_sentence_spans(text)
+            if len(timestamp_pairs) >= max(len(text), spans[-1][1] if spans else 0):
+                for start_idx, end_idx, sentence in spans:
+                    start_ms, _ = timestamp_pairs[max(start_idx, 0)]
+                    _, end_ms = timestamp_pairs[min(max(end_idx - 1, 0), len(timestamp_pairs) - 1)]
+                    sentences.append(
+                        _segment_from_time_range(
+                            text=sentence,
+                            start_ms=start_ms,
+                            end_ms=end_ms,
+                            source="timestamp",
+                        )
+                    )
+            else:
+                start_ms, _ = timestamp_pairs[0]
+                _, end_ms = timestamp_pairs[-1]
+                sentences.append(
+                    _segment_from_time_range(
+                        text=text,
+                        start_ms=start_ms,
+                        end_ms=end_ms,
+                        source="timestamp",
+                    )
+                )
+            continue
+
+        if text and chunk.get("start_ms") is not None and chunk.get("end_ms") is not None:
             sentences.append(
-                {
-                    "speaker": _speaker_label(item.get("spk")),
-                    "speaker_id": item.get("spk", ""),
-                    "start_ms": item.get("start", ""),
-                    "end_ms": item.get("end", ""),
-                    "start": _ms_to_timestamp(item.get("start")),
-                    "end": _ms_to_timestamp(item.get("end")),
-                    "text": text,
-                }
+                _segment_from_time_range(
+                    text=text,
+                    start_ms=chunk.get("start_ms", ""),
+                    end_ms=chunk.get("end_ms", ""),
+                    source="chunk",
+                )
             )
     return sentences
 
@@ -231,11 +323,12 @@ def _extract_sentence_info(result: object) -> list[dict[str, object]]:
 def _format_speaker_transcript(sentences: list[dict[str, object]]) -> str:
     lines: list[str] = []
     for item in sentences:
-        speaker = str(item.get("speaker") or "Speaker ?")
+        speaker = str(item.get("speaker") or "").strip()
         start = str(item.get("start") or "")
         end = str(item.get("end") or "")
         time_range = f"[{start}-{end}] " if start or end else ""
-        lines.append(f"{time_range}{speaker}: {item.get('text', '')}".strip())
+        prefix = f"{speaker}: " if speaker else ""
+        lines.append(f"{time_range}{prefix}{item.get('text', '')}".strip())
     return "\n".join(line for line in lines if line).strip()
 
 
@@ -261,6 +354,7 @@ def _run_sensevoice(
     output_format: str,
     speaker_diarization: bool,
     require_speaker_diarization: bool,
+    use_vad: bool,
     allow_remote_model_lookup: bool,
 ) -> int:
     if output_format not in SENSEVOICE_TEXT_FORMATS:
@@ -296,12 +390,20 @@ def _run_sensevoice(
     base_model_kwargs: dict[str, object] = {
         "model": _resolve_model_ref(model_name, allow_remote_model_lookup=allow_remote_model_lookup),
         "trust_remote_code": True,
-        "vad_model": _resolve_model_ref("fsmn-vad", allow_remote_model_lookup=allow_remote_model_lookup),
-        "vad_kwargs": {"max_single_segment_time": 30000},
-        "punc_model": _resolve_model_ref("ct-punc", allow_remote_model_lookup=allow_remote_model_lookup),
         "device": _select_device("auto"),
         "disable_update": True,
     }
+    if use_vad or use_speaker_diarization:
+        base_model_kwargs.update(
+            {
+                "vad_model": _resolve_model_ref("fsmn-vad", allow_remote_model_lookup=allow_remote_model_lookup),
+                "vad_kwargs": {"max_single_segment_time": 30000},
+            }
+        )
+    if use_speaker_diarization:
+        base_model_kwargs["punc_model"] = _resolve_model_ref(
+            "ct-punc", allow_remote_model_lookup=allow_remote_model_lookup
+        )
     diarization_enabled = False
     try:
         model_kwargs = dict(base_model_kwargs)
@@ -334,10 +436,10 @@ def _run_sensevoice(
         "language": language,
         "use_itn": True,
         "batch_size_s": 60,
-        "merge_vad": True,
-        "merge_length_s": 15,
         "sentence_timestamp": True,
     }
+    if use_vad or use_speaker_diarization:
+        generate_kwargs.update({"merge_vad": True, "merge_length_s": 15})
     try:
         result = model.generate(**generate_kwargs)
     except Exception as exc:
@@ -366,7 +468,11 @@ def _run_sensevoice(
             "model_cache": _model_cache_report(),
             "speaker_diarization_requested": speaker_diarization,
             "speaker_diarization_enabled": diarization_enabled,
-            "speaker_diarization_detected": bool(speaker_sentences),
+            "sensevoice_vad_enabled": use_vad,
+            "timestamp_detected": bool(speaker_sentences),
+            "speaker_diarization_detected": bool(
+                diarization_enabled and any(item.get("speaker") for item in speaker_sentences)
+            ),
             "speakers": sorted({str(item.get("speaker")) for item in speaker_sentences if item.get("speaker")}),
             "sentence_info": speaker_sentences,
             "raw": result,
@@ -561,7 +667,17 @@ def main() -> int:
     parser.add_argument(
         "--no-speaker-diarization",
         action="store_true",
-        help="SenseVoice 不启用说话人分离（默认会尝试 cam++）",
+        help="兼容旧参数；SenseVoice 默认已经不启用说话人分离",
+    )
+    parser.add_argument(
+        "--speaker-diarization",
+        action="store_true",
+        help="显式启用 SenseVoice + cam++ 说话人分离；仅在需要区分发言人时使用",
+    )
+    parser.add_argument(
+        "--sensevoice-vad",
+        action="store_true",
+        help="显式启用 SenseVoice 的 fsmn-vad 分段；默认关闭，优先保留直接 SenseVoice 时间戳",
     )
     parser.add_argument(
         "--require-speaker-diarization",
@@ -632,8 +748,9 @@ def main() -> int:
             model_name=args.model,
             language=args.language,
             output_format=args.output_format,
-            speaker_diarization=not args.no_speaker_diarization,
+            speaker_diarization=args.speaker_diarization and not args.no_speaker_diarization,
             require_speaker_diarization=args.require_speaker_diarization,
+            use_vad=args.sensevoice_vad,
             allow_remote_model_lookup=args.allow_remote_model_lookup,
         )
         if sensevoice_code == 0 or args.engine == "sensevoice":
