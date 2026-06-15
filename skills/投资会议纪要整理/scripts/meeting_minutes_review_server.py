@@ -90,11 +90,11 @@ DEFAULT_FUNASR_NANO_MODEL = "FunAudioLLM/Fun-ASR-Nano-2512"
 DEFAULT_FUNASR_NANO_HUB = os.environ.get("FUNASR_NANO_HUB", "ms")
 DEFAULT_FUNASR_MODEL_CACHE = os.environ.get(
     "FUNASR_MODEL_CACHE",
-    "/Users/kumaai/Documents/Codex/workspace/投资纪要工作流/03 Resources/asr-model-cache",
+    "/Users/nananaranja/Documents/会议纪要整理/.model-cache",
 )
 DEFAULT_FUNASR_NANO_PYTHON = os.environ.get(
     "FUNASR_NANO_PYTHON",
-    "/Users/kumaai/Documents/Codex/workspace/投资纪要工作流/03 Resources/asr-runtimes/funasr-nano-venv/bin/python",
+    "/Users/nananaranja/Documents/会议纪要整理/.transcribe-venv/bin/python",
 )
 DEFAULT_ASR_HOTWORDS = (
     "半导体,算力,AI眼镜,液冷,CPO,PCB,光模块,光芯片,东田微,依米康,"
@@ -1347,6 +1347,20 @@ def _read_transcript_text(output_dir: Path, stem: str) -> str:
     return text_path.read_text(encoding="utf-8", errors="replace").strip()
 
 
+def _read_transcript_json(output_dir: Path, stem: str) -> dict[str, Any]:
+    json_path = output_dir / f"{stem}.json"
+    if not json_path.exists():
+        candidates = sorted(output_dir.glob("*.json"), key=lambda item: item.stat().st_mtime, reverse=True)
+        json_path = candidates[0] if candidates else json_path
+    if not json_path.exists():
+        return {}
+    try:
+        data = json.loads(json_path.read_text(encoding="utf-8", errors="replace"))
+    except json.JSONDecodeError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
 def _asr_diff_summary(primary_text: str, auxiliary_text: str, limit: int = 5000) -> str:
     if not primary_text or not auxiliary_text:
         return ""
@@ -1370,7 +1384,7 @@ def transcribe_audio_payload(path: Path, output_dir: Path, *, asr_model_choice: 
     auxiliary_dir = output_dir / "fun-asr-nano"
     primary_dir.mkdir(parents=True, exist_ok=True)
     auxiliary_dir.mkdir(parents=True, exist_ok=True)
-    primary_python = DEFAULT_FUNASR_NANO_PYTHON if model_config["engine"] == "fun-asr-nano" and Path(DEFAULT_FUNASR_NANO_PYTHON).exists() else sys.executable
+    primary_python = DEFAULT_FUNASR_NANO_PYTHON if model_config["engine"] in {"auto", "sensevoice", "fun-asr-nano"} and Path(DEFAULT_FUNASR_NANO_PYTHON).exists() else sys.executable
     command = [
         primary_python,
         str(SCRIPT_DIR / "transcribe_audio.py"),
@@ -1384,7 +1398,7 @@ def transcribe_audio_payload(path: Path, output_dir: Path, *, asr_model_choice: 
         "--whisper-model",
         model_config["whisper_model"],
         "--output-format",
-        "txt",
+        "all" if model_config["engine"] in {"auto", "sensevoice"} else "txt",
         "--language",
         "zh" if model_config["engine"] != "fun-asr-nano" else "中文",
     ]
@@ -1402,11 +1416,18 @@ def transcribe_audio_payload(path: Path, output_dir: Path, *, asr_model_choice: 
     if completed.returncode != 0:
         raise RuntimeError((completed.stderr or completed.stdout or "音频转录失败").strip())
     primary_text = _read_transcript_text(primary_dir, path.stem)
+    primary_json = _read_transcript_json(primary_dir, path.stem)
+    speaker_segments = primary_json.get("sentence_info") if isinstance(primary_json.get("sentence_info"), list) else []
     payload: dict[str, Any] = {
         "ok": True,
         "primary_engine": model_config["engine"],
         "primary_model": model_config["model"],
         "text": primary_text,
+        "speaker_diarization_enabled": bool(primary_json.get("speaker_diarization_enabled")),
+        "speaker_diarization_detected": bool(primary_json.get("speaker_diarization_detected")),
+        "speakers": primary_json.get("speakers") or [],
+        "speaker_segments": speaker_segments,
+        "sentence_info": speaker_segments,
         "auxiliary_engine": model_config.get("aux_engine", ""),
         "auxiliary_model": DEFAULT_FUNASR_NANO_MODEL if model_config.get("aux_engine") == "fun-asr-nano" else "",
         "auxiliary_text": "",

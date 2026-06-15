@@ -13,7 +13,7 @@ import tempfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-DEFAULT_HOST = "0.0.0.0"
+DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
 SCRIPT_DIR = Path(__file__).resolve().parent
 TRANSCRIBE_SCRIPT = SCRIPT_DIR / "transcribe_audio.py"
@@ -25,16 +25,48 @@ DEFAULT_NANO_MODEL = "FunAudioLLM/Fun-ASR-Nano-2512"
 DEFAULT_NANO_HUB = os.environ.get("FUNASR_NANO_HUB", "ms")
 DEFAULT_MODEL_CACHE = os.environ.get(
     "FUNASR_MODEL_CACHE",
-    "/Users/kumaai/Documents/Codex/workspace/投资纪要工作流/03 Resources/asr-model-cache",
+    "/Users/nananaranja/Documents/会议纪要整理/.model-cache",
 )
 DEFAULT_NANO_PYTHON = os.environ.get(
     "FUNASR_NANO_PYTHON",
-    "/Users/kumaai/Documents/Codex/workspace/投资纪要工作流/03 Resources/asr-runtimes/funasr-nano-venv/bin/python",
+    "/Users/nananaranja/Documents/会议纪要整理/.transcribe-venv/bin/python",
 )
 DEFAULT_HOTWORDS = (
     "半导体,算力,AI眼镜,液冷,CPO,PCB,光模块,光芯片,东田微,依米康,"
     "信测标准,中芯国际,中微公司,工业富联,北方华创,中际旭创,胜蓝股份"
 )
+
+LOG_DIR = Path(os.environ.get("KUMAAI_SYNC_LOG_DIR", str(Path.home() / "Library/Logs/kumaai-sync")))
+MODEL_REQUIREMENTS = {
+    "sensevoice": ("iic/SenseVoiceSmall", ("config.yaml", "model.pt")),
+    "vad": ("iic/speech_fsmn_vad_zh-cn-16k-common-pytorch", ("config.yaml", "model.pt")),
+    "speaker_diarization": ("iic/speech_campplus_sv_zh-cn_16k-common", ("config.yaml", "campplus_cn_common.bin")),
+    "fun_asr_nano": ("FunAudioLLM/Fun-ASR-Nano-2512", ("configuration.json",)),
+}
+
+
+def _model_cache_status() -> dict:
+    root = Path(DEFAULT_MODEL_CACHE).expanduser()
+    models = {}
+    for name, (relative_path, required_files) in MODEL_REQUIREMENTS.items():
+        candidates = [root / "modelscope" / "models" / relative_path, root / "modelscope" / relative_path]
+        path = next(
+            (
+                item
+                for item in candidates
+                if item.exists() and all((item / required).exists() for required in required_files)
+            ),
+            candidates[0],
+        )
+        missing = [item for item in required_files if not (path / item).exists()]
+        models[name] = {
+            "path": str(path),
+            "exists": path.exists(),
+            "complete": path.exists() and not missing,
+            "missing": missing,
+            "checked_paths": [str(item) for item in candidates],
+        }
+    return {"cache_root": str(root), "python": DEFAULT_NANO_PYTHON, "models": models}
 
 
 def _json_response(handler: BaseHTTPRequestHandler, status: int, payload: dict) -> None:
@@ -70,6 +102,20 @@ def _read_latest_txt(output_dir: Path, stem: str) -> str:
         candidates = sorted(output_dir.glob("*.txt"), key=lambda item: item.stat().st_mtime, reverse=True)
         text_path = candidates[0] if candidates else text_path
     return text_path.read_text(encoding="utf-8", errors="replace").strip() if text_path.exists() else ""
+
+
+def _read_latest_json(output_dir: Path, stem: str) -> dict:
+    json_path = output_dir / f"{stem}.json"
+    if not json_path.exists():
+        candidates = sorted(output_dir.glob("*.json"), key=lambda item: item.stat().st_mtime, reverse=True)
+        json_path = candidates[0] if candidates else json_path
+    if not json_path.exists():
+        return {}
+    try:
+        data = json.loads(json_path.read_text(encoding="utf-8", errors="replace"))
+    except json.JSONDecodeError:
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
 def _run_transcribe(command: list[str], output_dir: Path, stem: str, timeout: int = 7200) -> tuple[bool, str, str]:
@@ -121,6 +167,7 @@ class SenseVoiceHandler(BaseHTTPRequestHandler):
                     "primary_model": DEFAULT_PRIMARY_MODEL,
                     "auxiliary_engine": DEFAULT_AUX_ENGINE,
                     "auxiliary_model": DEFAULT_NANO_MODEL if DEFAULT_AUX_ENGINE == "fun-asr-nano" else "",
+                    "model_cache": _model_cache_status(),
                 },
             )
             return
@@ -156,7 +203,7 @@ class SenseVoiceHandler(BaseHTTPRequestHandler):
             auxiliary_dir.mkdir()
 
             command = [
-                sys.executable,
+                DEFAULT_NANO_PYTHON if Path(DEFAULT_NANO_PYTHON).exists() else sys.executable,
                 str(TRANSCRIBE_SCRIPT),
                 str(audio_path),
                 "--engine",
@@ -164,13 +211,15 @@ class SenseVoiceHandler(BaseHTTPRequestHandler):
                 "--output-dir",
                 str(primary_dir),
                 "--output-format",
-                "txt",
+                "all",
                 "--language",
                 "zh",
             ]
             if DEFAULT_MODEL_CACHE:
                 command.extend(["--cache-dir", DEFAULT_MODEL_CACHE])
             primary_ok, text, primary_error = _run_transcribe(command, primary_dir, "input")
+            primary_json = _read_latest_json(primary_dir, "input")
+            speaker_segments = primary_json.get("sentence_info") if isinstance(primary_json.get("sentence_info"), list) else []
             payload = {
                 "ok": primary_ok,
                 "engine": "sensevoice",
@@ -179,6 +228,11 @@ class SenseVoiceHandler(BaseHTTPRequestHandler):
                 "primary_model": DEFAULT_PRIMARY_MODEL,
                 "filename": filename,
                 "text": text,
+                "speaker_diarization_enabled": bool(primary_json.get("speaker_diarization_enabled")),
+                "speaker_diarization_detected": bool(primary_json.get("speaker_diarization_detected")),
+                "speakers": primary_json.get("speakers") or [],
+                "speaker_segments": speaker_segments,
+                "sentence_info": speaker_segments,
             }
             if not primary_ok:
                 payload["error"] = primary_error or "SenseVoice transcription failed"
