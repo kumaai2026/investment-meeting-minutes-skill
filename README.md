@@ -11,6 +11,7 @@
 - `skills/投资会议纪要-上市公司交流`：用于上市公司管理层交流、业绩会和调研纪要。
 - `skills/投资会议纪要-专家交流`：用于专家电话会、产业链访谈、渠道调研和主题深访。
 - `skills/投资会议纪要-其他`：用于不属于以上三类的自定义中文投研会议。
+- `skills/meeting-minutes-sanitizer`：用于中文投研会议纪要脱敏，删除发言人身份和发言风格，输出 `<原文件名>_sanitized.docx` 与 `<原文件名>_rag.jsonl`。
 
 ## 适用输入
 
@@ -152,6 +153,7 @@ python3 skills/投资会议纪要整理/scripts/run_meeting_minutes_regression.p
 python3 skills/投资会议纪要整理/scripts/validate_meeting_minutes_contract.py NOTE.md
 python3 skills/投资会议纪要整理/scripts/validate_word_export.py NOTE.docx
 python3 skills/投资会议纪要整理/scripts/transcribe_audio.py --check-model-cache
+python3 skills/meeting-minutes-sanitizer/scripts/sanitize_minutes.py NOTE.md --output-dir outputs
 ```
 
 包发布或迁移前，应确认：
@@ -171,5 +173,7 @@ python3 skills/投资会议纪要整理/scripts/transcribe_audio.py --check-mode
 - ASR 模型权重、下载缓存和 Python 虚拟环境。
 - Obsidian 正式会议纪要、用户原始录音或转写原件。
 - 临时草稿、运行日志和 `__pycache__`。
+
+`skills/meeting-minutes-sanitizer` 的最小运行依赖见该目录下的 `requirements.txt`，当前只包含 Word 导出所需的 `python-docx`。
 
 脚本中的本机路径是当前部署默认值。迁移到其他机器时，应把这些路径映射到目标环境的工作流根目录、模型缓存、Dify 地址、Obsidian vault 和 Google Drive 同步目标。
