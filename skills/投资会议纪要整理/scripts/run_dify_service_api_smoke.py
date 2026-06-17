@@ -42,7 +42,7 @@ SMOKE_INPUTS = {
     "custom_meeting_series": "",
     "review_date": "2026-05-09",
     "speakers": "主持人, 张三",
-    "correction_notes": "小样本 smoke test；按当前两节结构整理，保留原文信息。",
+    "correction_notes": "小样本 smoke test；按当前输出合同整理，保留原文信息。",
     "input_reviewed": "true",
     "source_input_draft_id": "service-api-smoke-pre-reviewed",
 }
@@ -137,7 +137,7 @@ def validate_response(response: dict[str, Any]) -> dict[str, Any]:
     drafts_url = url_path(str(outputs.get("drafts_url") or ""))
     history_url = url_path(str(outputs.get("history_url") or ""))
     note_markdown = extract_note(result_markdown)
-    contract = validate_contract(note_markdown, required_terms=["中芯国际", "没有加仓", "交付节奏"])
+    contract = validate_contract(note_markdown, required_terms=["中芯国际", "没有加仓", "交付节奏"], source_mode="document")
 
     errors: list[str] = []
     if data.get("status") != "succeeded":

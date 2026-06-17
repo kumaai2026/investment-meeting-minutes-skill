@@ -12,6 +12,11 @@ FRONTEND_ERR_LOG="${LOG_DIR}/kuma-frontend-server.err.log"
 
 mkdir -p "${LOG_DIR}"
 
+LIBREOFFICE_LIBRARY_PATH="/opt/homebrew/opt/little-cms2/lib:/opt/homebrew/lib:/usr/local/opt/little-cms2/lib:/usr/local/lib"
+export DYLD_FALLBACK_LIBRARY_PATH="${LIBREOFFICE_LIBRARY_PATH}:${DYLD_FALLBACK_LIBRARY_PATH:-}"
+export DYLD_LIBRARY_PATH="${LIBREOFFICE_LIBRARY_PATH}:${DYLD_LIBRARY_PATH:-}"
+export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${PATH:-}"
+
 if command -v screen >/dev/null 2>&1; then
   screen -S "${REVIEW_SESSION_NAME}" -X quit >/dev/null 2>&1 || true
   screen -S "${FRONTEND_SESSION_NAME}" -X quit >/dev/null 2>&1 || true

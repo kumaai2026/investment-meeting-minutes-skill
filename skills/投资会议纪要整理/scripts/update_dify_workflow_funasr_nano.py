@@ -82,7 +82,37 @@ def _payload_text(payload, *keys):
         return _to_text(nano)
     return ""
 
-def _cross_check_summary(text_reference, sensevoice_text, sensevoice_status, nano_text, nano_status, asr_comparison_summary):
+def _payload_segments(payload):
+    for key in ("sensevoice_timestamp_segments", "timestamp_segments", "sentence_info", "speaker_segments"):
+        value = payload.get(key)
+        if isinstance(value, list):
+            return value
+    return []
+
+def _segment_text(item):
+    if not isinstance(item, dict):
+        return ""
+    text = _to_text(item.get("text") or item.get("sentence"))
+    if not text:
+        return ""
+    start = _to_text(item.get("start") or item.get("start_time") or item.get("begin"))
+    end = _to_text(item.get("end") or item.get("end_time") or item.get("finish"))
+    speaker = _to_text(item.get("speaker") or item.get("spk"))
+    anchor = f"[{start}-{end}]" if start or end else "[时间戳待定位]"
+    prefix = f"{speaker}: " if speaker else ""
+    return f"{anchor} {prefix}{text}".strip()
+
+def _timestamp_index(segments, limit=120):
+    lines = []
+    for item in segments[:limit]:
+        line = _segment_text(item)
+        if line:
+            lines.append(line)
+    if len(segments) > limit:
+        lines.append(f"...（时间戳索引过长，已截断；共 {len(segments)} 段）")
+    return "\n".join(lines).strip()
+
+def _cross_check_summary(text_reference, sensevoice_text, sensevoice_status, nano_text, nano_status, asr_comparison_summary, timestamp_detected):
     lines = []
     if text_reference and sensevoice_text:
         text_only = _weakly_covered(_segments(text_reference), sensevoice_text)
@@ -105,6 +135,8 @@ def _cross_check_summary(text_reference, sensevoice_text, sensevoice_status, nan
         lines.append("- Nano 只作为辅助校验来源。公司名、股票代码、数字、英文缩写和金融术语与 SenseVoice 冲突时，不要自动改写，必须在初校稿保留并标注。")
     if asr_comparison_summary:
         lines.append("【SenseVoice vs Fun-ASR-Nano 差异摘要】\n" + asr_comparison_summary[:4000])
+    if sensevoice_text and not timestamp_detected:
+        lines.append("- 未检测到 SenseVoice 句级时间戳索引；音频来源的存疑项需要人工定位或改用 SenseVoice/FunASR VAD 时间戳，不能默认批量写“未提供”，也不能降级调用其他 ASR。")
     lines.append("- 标的名称、股票代码、行业和 A 股知识需要用 a-stock-data / 本地代码表核验；ASR 结果不能单独作为写入代码的依据。")
     return "\n".join(lines).strip()
 
@@ -115,6 +147,9 @@ def main(pasted_text, document_text, sensevoice_body):
     sensevoice_text = ""
     fun_asr_nano_text = ""
     asr_comparison_summary = ""
+    sensevoice_timestamp_index = ""
+    sensevoice_timestamp_segments = []
+    timestamp_detected = False
     sensevoice_status = "未上传音频"
     nano_status = ""
     if body:
@@ -124,6 +159,9 @@ def main(pasted_text, document_text, sensevoice_body):
             fun_asr_nano_text = _payload_text(payload, "fun_asr_nano_transcript", "auxiliary_text")
             nano_status = _to_text(payload.get("auxiliary_status"))
             asr_comparison_summary = _to_text(payload.get("asr_comparison_summary") or payload.get("asr_comparison_diff"))
+            sensevoice_timestamp_segments = _payload_segments(payload)
+            sensevoice_timestamp_index = _timestamp_index(sensevoice_timestamp_segments)
+            timestamp_detected = bool(payload.get("timestamp_detected") or sensevoice_timestamp_index)
             if payload.get("ok") and sensevoice_text:
                 sensevoice_status = "SenseVoice 转录成功"
             elif payload.get("ok"):
@@ -144,6 +182,8 @@ def main(pasted_text, document_text, sensevoice_body):
         parts.append("【原始文本/文稿】\n" + text_reference)
     if sensevoice_text:
         parts.append("【SenseVoice 音频转录】\n" + sensevoice_text)
+    if sensevoice_timestamp_index:
+        parts.append("【SenseVoice 时间戳索引】\n" + sensevoice_timestamp_index)
     combined_text = "\n\n".join(parts).strip()
     if text_reference and sensevoice_text:
         input_mode = "音频+文本：必须先交叉校对后再进入整理"
@@ -160,10 +200,14 @@ def main(pasted_text, document_text, sensevoice_body):
         fun_asr_nano_text,
         nano_status,
         asr_comparison_summary,
+        timestamp_detected,
     )
     return {
         "text_reference": text_reference,
         "sensevoice_transcript": sensevoice_text,
+        "sensevoice_timestamp_index": sensevoice_timestamp_index,
+        "sensevoice_timestamp_segments": json.dumps(sensevoice_timestamp_segments, ensure_ascii=False),
+        "timestamp_detected": "true" if timestamp_detected else "false",
         "fun_asr_nano_transcript": fun_asr_nano_text,
         "asr_comparison_summary": asr_comparison_summary,
         "sensevoice_status": sensevoice_status,
@@ -174,11 +218,11 @@ def main(pasted_text, document_text, sensevoice_body):
 '''
 
 
-PROMPT_INSERT = '''\n- Fun-ASR-Nano-2512 辅助转录：{{#1779200000001.fun_asr_nano_transcript#}}\n- ASR 差异摘要：{{#1779200000001.asr_comparison_summary#}}\n'''
+PROMPT_INSERT = '''\n- SenseVoice 句级时间戳：{{#1779200000001.timestamp_detected#}}\n- SenseVoice 时间戳索引：{{#1779200000001.sensevoice_timestamp_index#}}\n- Fun-ASR-Nano-2512 辅助转录：{{#1779200000001.fun_asr_nano_transcript#}}\n- ASR 差异摘要：{{#1779200000001.asr_comparison_summary#}}\n'''
 
-PROMPT_SECTION = '''\n【Fun-ASR-Nano-2512 辅助转录，只用于交叉校验】\n{{#1779200000001.fun_asr_nano_transcript#}}\n\n【SenseVoice vs Fun-ASR-Nano 差异摘要】\n{{#1779200000001.asr_comparison_summary#}}\n'''
+PROMPT_SECTION = '''\n【SenseVoice 时间戳索引，用于存疑时间戳定位】\n{{#1779200000001.sensevoice_timestamp_index#}}\n\n【Fun-ASR-Nano-2512 辅助转录，只用于交叉校验】\n{{#1779200000001.fun_asr_nano_transcript#}}\n\n【SenseVoice vs Fun-ASR-Nano 差异摘要】\n{{#1779200000001.asr_comparison_summary#}}\n'''
 
-PROMPT_RULE = '''\n【ASR 与金融校验规则】\n- SenseVoice 是主转录来源，Fun-ASR-Nano-2512 是辅助对照来源；两者冲突时不得自动替换，必须保留不稳妥片段并写入存疑。\n- 对公司名、股票代码、行业、A 股金融知识和英文缩写，必须使用可用的 a-stock-data 能力、本地代码表或 review bridge MCP 工具核验；ASR 结果不能单独作为写入代码的依据。\n- Nano 更像术语时可以作为候选提示，但只有通过代码/资料核验后才能写成确定项。\n'''
+PROMPT_RULE = '''\n【ASR 与金融校验规则】\n- SenseVoice 是主转录来源，Fun-ASR-Nano-2512 是辅助对照来源；两者冲突时不得自动替换，必须保留不稳妥片段并写入存疑。\n- 生成存疑时间戳时，优先从 SenseVoice 时间戳索引查找包含或邻近存疑词的原句；音频来源且索引存在时，不得把存疑时间戳批量写成“未提供”。\n- 若本会话只有文稿/Word/PDF 文档、没有音频/视频或带时间戳转写，正文存疑词只加粗，不写正文时间戳占位；若最终存在存疑表，表格统一使用 `时间戳 | 原始表述 | 当前判断 | 存疑原因 | 候选项 | 核验依据 | 人工确认`，时间戳单元格写 `未提供`。\n- 无真实存疑内容时，不生成 `## 二、存疑与待确认`，也不写“暂无存疑”。\n- 每条真实存疑必须在整理后强制完成上下文 + 搜索/证据核验；`核验依据` 必须同时写明 `上下文：...` 和 `检索/证据：...`，不能只写“待确认”，也不能只依赖 ASR。\n- 对公司名、股票代码、行业、A 股金融知识和英文缩写，必须使用可用的 a-stock-data 能力、本地代码表或 review bridge MCP 工具核验；ASR 结果不能单独作为写入代码的依据。\n- Nano 更像术语时可以作为候选提示，但只有通过代码/资料核验后才能写成确定项。\n'''
 
 
 def run_psql(container: str, sql: str) -> str:
@@ -224,6 +268,9 @@ def patch_merge_node(node: dict[str, Any]) -> bool:
     data["title"] = "合并：文本与 SenseVoice/Nano 转录并生成交叉校对提示"
     data["code"] = MERGE_CODE
     outputs = node_outputs(data)
+    outputs.setdefault("sensevoice_timestamp_index", {"type": "string"})
+    outputs.setdefault("sensevoice_timestamp_segments", {"type": "string"})
+    outputs.setdefault("timestamp_detected", {"type": "string"})
     outputs.setdefault("fun_asr_nano_transcript", {"type": "string"})
     outputs.setdefault("asr_comparison_summary", {"type": "string"})
     return True
@@ -233,11 +280,11 @@ def patch_http_node(node: dict[str, Any]) -> bool:
     data = node.get("data") if isinstance(node.get("data"), dict) else {}
     if node.get("id") != "1779120000002":
         return False
-    data["title"] = "本地音视频转录兜底：SenseVoice + Fun-ASR-Nano"
+    data["title"] = "本地音视频转录：SenseVoice"
     body = data.get("body") if isinstance(data.get("body"), dict) else {}
     for item in body.get("data") or []:
         if isinstance(item, dict) and item.get("key") == "asr_model":
-            item["value"] = "自动：SenseVoiceSmall；Fun-ASR-Nano-2512 辅助对照；失败回退 Whisper medium"
+            item["value"] = "自动：SenseVoiceSmall；Nano 需显式选择；禁止降级为其他 ASR"
     return True
 
 
@@ -276,15 +323,33 @@ def patch_prompt_dict(value: dict[str, Any]) -> bool:
 
 
 def patch_prompt_text(text: str) -> str:
-    if "Fun-ASR-Nano-2512 辅助转录" in text and "ASR 与金融校验规则" in text:
+    if (
+        "Fun-ASR-Nano-2512 辅助转录" in text
+        and "ASR 与金融校验规则" in text
+        and "SenseVoice 时间戳索引" in text
+    ):
         return text
     result = text
     marker = "- SenseVoice 状态：{{#1779200000001.sensevoice_status#}}\n"
     if marker in result and "fun_asr_nano_transcript" not in result:
         result = result.replace(marker, marker + PROMPT_INSERT, 1)
+    elif marker in result and "sensevoice_timestamp_index" not in result:
+        timestamp_insert = (
+            "- SenseVoice 句级时间戳：{{#1779200000001.timestamp_detected#}}\n"
+            "- SenseVoice 时间戳索引：{{#1779200000001.sensevoice_timestamp_index#}}\n"
+        )
+        result = result.replace(marker, marker + timestamp_insert, 1)
     section_marker = "【合并输入，作为正文整理主来源】\n{{#1779200000001.combined_text#}}\n"
     if section_marker in result and "Fun-ASR-Nano-2512 辅助转录，只用于交叉校验" not in result:
         result = result.replace(section_marker, section_marker + PROMPT_SECTION, 1)
+    elif "Fun-ASR-Nano-2512 辅助转录，只用于交叉校验" in result and "SenseVoice 时间戳索引，用于存疑时间戳定位" not in result:
+        result = result.replace(
+            "【Fun-ASR-Nano-2512 辅助转录，只用于交叉校验】",
+            "【SenseVoice 时间戳索引，用于存疑时间戳定位】\n"
+            "{{#1779200000001.sensevoice_timestamp_index#}}\n\n"
+            "【Fun-ASR-Nano-2512 辅助转录，只用于交叉校验】",
+            1,
+        )
     history_marker = "【历史纪要参考，只可用于名称/代码/术语校验，不得压缩本次原文】"
     if history_marker in result and "ASR 与金融校验规则" not in result:
         result = result.replace(history_marker, PROMPT_RULE + "\n" + history_marker, 1)

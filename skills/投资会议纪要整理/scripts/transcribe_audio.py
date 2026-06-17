@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""High-quality local transcription wrapper for SenseVoice, Fun-ASR-Nano, and Whisper."""
+"""High-quality local transcription wrapper for SenseVoice and Fun-ASR-Nano."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from pathlib import Path
 DEFAULT_SENSEVOICE_MODEL = "iic/SenseVoiceSmall"
 DEFAULT_FUNASR_NANO_MODEL = "FunAudioLLM/Fun-ASR-Nano-2512"
 DEFAULT_FUNASR_NANO_HUB = "ms"
-DEFAULT_LOCAL_CACHE = Path("/Users/nananaranja/Documents/会议纪要整理/.model-cache")
+DEFAULT_LOCAL_CACHE = Path("/Users/nananaranja/Documents/Codex/asr-model-cache")
 MODEL_ALIASES = {
     "iic/SenseVoiceSmall": ("modelscope", "models/iic/SenseVoiceSmall"),
     "SenseVoiceSmall": ("modelscope", "models/iic/SenseVoiceSmall"),
@@ -33,8 +33,6 @@ REQUIRED_MODEL_FILES = {
     "cam++": ("config.yaml", "campplus_cn_common.bin"),
     "FunAudioLLM/Fun-ASR-Nano-2512": ("configuration.json",),
 }
-MIN_WHISPER_MODEL = "medium"
-LOW_QUALITY_MODELS = {"tiny", "base", "small"}
 SENSEVOICE_TEXT_FORMATS = {"txt", "json", "all"}
 FUNASR_NANO_TEXT_FORMATS = {"txt", "json", "all"}
 
@@ -356,10 +354,11 @@ def _run_sensevoice(
     require_speaker_diarization: bool,
     use_vad: bool,
     allow_remote_model_lookup: bool,
+    include_raw_json: bool,
 ) -> int:
     if output_format not in SENSEVOICE_TEXT_FORMATS:
         print(
-            "SenseVoice 当前只写出 txt/json/all；如需 vtt/srt/tsv，请使用 --engine whisper。",
+            "SenseVoice/FunASR 当前只允许输出 txt/json/all；禁止降级为 Whisper 生成字幕格式。",
             file=sys.stderr,
         )
         return 2
@@ -383,7 +382,7 @@ def _run_sensevoice(
             return 1
         print(
             "SenseVoice 说话人分离模型 cam++ 本地缓存不完整，"
-            f"缺少 {spk_cache_status.get('missing')}；已跳过远程查找并降级为纯转录。",
+            f"缺少 {spk_cache_status.get('missing')}；已跳过远程查找并改为纯 SenseVoice 转录。",
             file=sys.stderr,
         )
 
@@ -418,7 +417,7 @@ def _run_sensevoice(
             raise
         if speaker_diarization:
             print(
-                f"SenseVoice 说话人分离不可用，降级为纯转录: {exc}",
+                f"SenseVoice 说话人分离不可用，改为纯 SenseVoice 转录: {exc}",
                 file=sys.stderr,
             )
         try:
@@ -446,7 +445,7 @@ def _run_sensevoice(
         if require_speaker_diarization or not speaker_diarization:
             raise
         print(
-            f"SenseVoice 说话人分离生成失败，降级为纯转录: {exc}",
+            f"SenseVoice 说话人分离生成失败，改为纯 SenseVoice 转录: {exc}",
             file=sys.stderr,
         )
         model = AutoModel(**base_model_kwargs)
@@ -475,8 +474,9 @@ def _run_sensevoice(
             ),
             "speakers": sorted({str(item.get("speaker")) for item in speaker_sentences if item.get("speaker")}),
             "sentence_info": speaker_sentences,
-            "raw": result,
         }
+        if include_raw_json:
+            payload["raw"] = result
         (output_dir / f"{stem}.json").write_text(
             json.dumps(payload, ensure_ascii=False, indent=2, default=str),
             encoding="utf-8",
@@ -497,10 +497,11 @@ def _run_funasr_nano(
     device: str,
     use_vad: bool,
     allow_remote_model_lookup: bool,
+    include_raw_json: bool,
 ) -> int:
     if output_format not in FUNASR_NANO_TEXT_FORMATS:
         print(
-            "Fun-ASR-Nano 当前只写出 txt/json/all；如需 vtt/srt/tsv，请使用 --engine whisper。",
+            "Fun-ASR-Nano 当前只允许输出 txt/json/all；禁止降级为 Whisper 生成字幕格式。",
             file=sys.stderr,
         )
         return 2
@@ -554,8 +555,9 @@ def _run_funasr_nano(
             "hotwords": hotword_list,
             "input": str(input_file),
             "text": output_text,
-            "raw": result,
         }
+        if include_raw_json:
+            payload["raw"] = result
         (output_dir / f"{stem}.json").write_text(
             json.dumps(payload, ensure_ascii=False, indent=2, default=str),
             encoding="utf-8",
@@ -565,62 +567,8 @@ def _run_funasr_nano(
     return 0
 
 
-def _run_whisper(
-    input_file: Path,
-    output_dir: Path,
-    model: str,
-    language: str,
-    output_format: str,
-) -> int:
-    model = model.strip().lower()
-    if model in LOW_QUALITY_MODELS:
-        print(
-            f"检测到低质量 Whisper 模型 `{model}`，已自动提升为 `{MIN_WHISPER_MODEL}`（质量优先）。",
-            file=sys.stderr,
-        )
-        model = MIN_WHISPER_MODEL
-
-    whisper_cmd = shutil.which("whisper")
-    if whisper_cmd:
-        cmd = [
-            whisper_cmd,
-            str(input_file),
-            "--model",
-            model,
-            "--language",
-            language,
-            "--task",
-            "transcribe",
-            "--output_dir",
-            str(output_dir),
-            "--output_format",
-            output_format,
-        ]
-    else:
-        cmd = [
-            sys.executable,
-            "-m",
-            "whisper",
-            str(input_file),
-            "--model",
-            model,
-            "--language",
-            language,
-            "--task",
-            "transcribe",
-            "--output_dir",
-            str(output_dir),
-            "--output_format",
-            output_format,
-        ]
-
-    env = _ensure_ffmpeg_in_path(dict(os.environ))
-    completed = subprocess.run(cmd, check=False, env=env)
-    return completed.returncode
-
-
 def main() -> int:
-    parser = argparse.ArgumentParser(description="使用本地 ASR 转录音频（优先 SenseVoice，可显式运行 Fun-ASR-Nano）")
+    parser = argparse.ArgumentParser(description="使用本地 SenseVoice/FunASR 转录音频；禁止降级为 Whisper")
     parser.add_argument("input_file", nargs="?", help="音频文件路径")
     parser.add_argument(
         "--output-dir",
@@ -630,8 +578,8 @@ def main() -> int:
     parser.add_argument(
         "--engine",
         default="auto",
-        choices=["auto", "sensevoice", "fun-asr-nano", "whisper"],
-        help="ASR 引擎，默认 auto（优先 SenseVoice，必要时回退 Whisper）；fun-asr-nano 用于辅助对照",
+        choices=["auto", "sensevoice", "fun-asr-nano"],
+        help="ASR 引擎，默认 auto（SenseVoice/FunASR）；fun-asr-nano 用于辅助对照或显式转写",
     )
     parser.add_argument(
         "--model",
@@ -682,7 +630,7 @@ def main() -> int:
     parser.add_argument(
         "--require-speaker-diarization",
         action="store_true",
-        help="如果 SenseVoice 说话人分离不可用则直接失败，而不是降级纯转录",
+        help="如果 SenseVoice 说话人分离不可用则直接失败，而不是改为纯 SenseVoice 转录",
     )
     parser.add_argument(
         "--cache-dir",
@@ -690,14 +638,9 @@ def main() -> int:
         help="可选模型缓存根目录；也可用 FUNASR_MODEL_CACHE 环境变量设置",
     )
     parser.add_argument(
-        "--whisper-model",
-        default=MIN_WHISPER_MODEL,
-        help="Whisper 回退模型名，默认 medium（质量优先）",
-    )
-    parser.add_argument(
         "--output-format",
         default="txt",
-        choices=["txt", "vtt", "srt", "tsv", "json", "all"],
+        choices=["txt", "json", "all"],
         help="输出格式，默认 txt",
     )
     parser.add_argument(
@@ -715,6 +658,11 @@ def main() -> int:
         action="store_true",
         help="允许在本地缓存缺失时使用远程模型名；默认关闭，避免每次整理会议纪要时重新下载模型",
     )
+    parser.add_argument(
+        "--debug-raw-json",
+        action="store_true",
+        help="调试时在 JSON 中额外保留模型原始返回；默认关闭以减少写盘体积",
+    )
     args = parser.parse_args()
 
     _configure_model_cache(args.cache_dir)
@@ -722,10 +670,8 @@ def main() -> int:
         _print_model_cache_report()
         report = _model_cache_report()
         models = report.get("models", {})
-        if isinstance(models, dict) and all(
-            isinstance(item, dict) and item.get("complete")
-            for item in models.values()
-        ):
+        sensevoice = models.get("sensevoice") if isinstance(models, dict) else {}
+        if isinstance(sensevoice, dict) and sensevoice.get("complete"):
             return 0
         return 1
 
@@ -752,10 +698,9 @@ def main() -> int:
             require_speaker_diarization=args.require_speaker_diarization,
             use_vad=args.sensevoice_vad,
             allow_remote_model_lookup=args.allow_remote_model_lookup,
+            include_raw_json=args.debug_raw_json,
         )
-        if sensevoice_code == 0 or args.engine == "sensevoice":
-            return sensevoice_code
-        print("SenseVoice 不可用，自动回退到 Whisper。", file=sys.stderr)
+        return sensevoice_code
 
     if args.engine == "fun-asr-nano":
         return _run_funasr_nano(
@@ -769,15 +714,11 @@ def main() -> int:
             device=args.device,
             use_vad=not args.no_vad,
             allow_remote_model_lookup=args.allow_remote_model_lookup,
+            include_raw_json=args.debug_raw_json,
         )
 
-    return _run_whisper(
-        input_file=input_file,
-        output_dir=output_dir,
-        model=args.whisper_model,
-        language=args.language,
-        output_format=args.output_format,
-    )
+    print("未知 ASR 引擎；只能使用 SenseVoice/FunASR。", file=sys.stderr)
+    return 2
 
 
 if __name__ == "__main__":

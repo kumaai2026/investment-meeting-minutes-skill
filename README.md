@@ -2,7 +2,7 @@
 
 这个仓库保存 Codex 使用的中文投资会议纪要整理 skill 包，用于把投资研究场景中的会议录音、转写稿、纪要草稿或音频+文字混合材料，整理成可人工复核、可归档、可同步知识库的 Markdown 和 Word 会议纪要。
 
-它的核心目标不是生成压缩摘要，而是保留接近原始发言的信息密度：按真实发言顺序整理，去除无意义口水词和明显 ASR 噪声，校正公司名、股票代码、行业术语、数字和专有名词，并把不能确认的内容放入带时间戳的存疑表。
+它的核心目标不是生成压缩摘要，而是保留接近原始发言的信息密度：按真实发言顺序整理，去除无意义口水词和明显 ASR 噪声，校正公司名、股票代码、行业术语、数字和专有名词；只有存在不能确认的内容时，才生成存疑表。
 
 ## Skill 包内容
 
@@ -12,6 +12,9 @@
 - `skills/投资会议纪要-专家交流`：用于专家电话会、产业链访谈、渠道调研和主题深访。
 - `skills/投资会议纪要-其他`：用于不属于以上三类的自定义中文投研会议。
 - `skills/meeting-minutes-sanitizer`：用于中文投研会议纪要脱敏，删除发言人身份和发言风格，输出 `<原文件名>_sanitized.docx` 与 `<原文件名>_rag.jsonl`。
+- `skills/投资会议纪要整理/references/dify_adapter_guide.md`：Dify/Skill Agent 调用层说明；Dify 只负责编排、人工关口和同步，不拥有正文输出格式。
+- `skills/投资会议纪要整理/references/archive_naming_contract.md`：原始材料和终稿归档命名规范。
+- `skills/投资会议纪要整理/references/runtime_readiness_guide.md`：正式运行前依赖、模型缓存和禁止运行期下载规则。
 
 ## 适用输入
 
@@ -31,8 +34,8 @@
 
 - 读者可见的元信息：`会议日期`、`整理时间`、`会议标题`、`会议类型`、`会议系列`，上市公司交流还应包含 `会议标的`。
 - `## 一、逐发言人原文整理`：按真实发言顺序整理后的近原文内容。
-- `## 二、存疑与待确认`：固定表头为 `时间戳 | 原始表述 | 当前判断 | 存疑原因 | 候选项 | 人工确认`。
-- 正文中的存疑词：必须加粗，并紧跟 `（存疑时间戳：HH:MM:SS）`；无法定位时使用 `未提供`。
+- `## 二、存疑与待确认`：只有存在真实存疑内容时输出；表头统一为 `时间戳 | 原始表述 | 当前判断 | 存疑原因 | 候选项 | 核验依据 | 人工确认`，文稿-only 或无法定位时间锚点时 `时间戳` 写 `未提供`。
+- 正文中的存疑词：必须加粗；只有音频/带时间戳转写来源才紧跟 `（存疑时间戳：HH:MM:SS）`，文稿-only 正文不写时间戳占位。
 - Word 导出中的存疑词：应显示为加粗 + 下划线，方便人工校对。
 
 不会在终稿中输出：
@@ -46,9 +49,9 @@
 | 步骤 | 做什么 | 使用的大模型/服务 | MCP/本地工具 | 外部数据和证据 |
 | --- | --- | --- | --- | --- |
 | 1. 原始材料归档 | 先复制所有原始音频、文稿、附件，不移动用户原文件 | 无 | `archive_raw_inputs.py`、Dify `/archive-inputs` 桥接服务 | 本地 Obsidian 工作流目录、Google Drive 同步目标 |
-| 2. 音频转写 | 将录音转成可复核文本，优先带说话人和句级时间戳 | SenseVoice `iic/SenseVoiceSmall`，FunASR VAD，cam++ 说话人分离 | `transcribe_audio.py`、`sensevoice_transcription_server.py` | 本地 FunASR/ModelScope 模型缓存 |
-| 3. 辅助转写比对 | 交叉检查公司名、术语、数字、英文缩写 | Fun-ASR-Nano-2512 | `compare_asr_models.py`、`transcribe_audio.py --engine fun-asr-nano` | 本地 Nano 运行环境和模型缓存 |
-| 4. 转写失败兜底 | 本地 FunASR 不可用时继续处理已有文本；需要字幕时间戳时可用 Whisper | Whisper，默认不使用低质量 `tiny/base/small` | `transcribe_audio.py --engine whisper` | 用户提供文本、已有转写稿 |
+| 2. 音频转写 | 将录音转成可复核文本，优先纯 SenseVoice | SenseVoice `iic/SenseVoiceSmall` | `transcribe_audio.py`、`sensevoice_transcription_server.py` | 本地 FunASR/ModelScope 模型缓存 |
+| 3. 可选辅助转写比对 | 显式需要时交叉检查公司名、术语、数字、英文缩写 | Fun-ASR-Nano-2512，仅作为辅助 | `compare_asr_models.py`、`transcribe_audio.py --engine fun-asr-nano` | 本地 Nano 运行环境和模型缓存 |
+| 4. 转写失败处理 | 本地 SenseVoice/FunASR 不可用时继续处理已有文本，不使用其他 ASR 降级转写 | 无 | 初审稿/已有转写稿 | 用户提供文本、已有转写稿 |
 | 5. 预处理 | 清理长文本、识别发言人边界、抽取候选标的 | Codex/Skill Agent 所用大模型 | `process_transcript.py` | 原始转写、人工初审稿 |
 | 6. 会议类型分发 | 按用户选择调用多人复盘、上市公司交流、专家交流或其他类型 skill | Codex/Skill Agent 所用大模型 | Dify Skill Agent、本仓库类型 skill | Dify 传入的 `meeting_type`、`meeting_series`、标题和正文 |
 | 7. 名称和代码校对 | 校正公司名、股票代码、行业术语、人物/机构名、产品名 | Codex/Skill Agent 所用大模型 | `query_symbol_candidates.py`、`a-stock-data` 能力、review bridge 的 `/target-query` | A 股/HK/US 本地证券映射、公司资料、行情/标的证据 |
@@ -61,18 +64,22 @@
 ## 转录规则
 
 - 默认入口是 `scripts/transcribe_audio.py`。
-- `--engine auto` 优先使用 SenseVoice/FunASR；本地不可用时才降级到 Whisper。
+- `--engine auto` 只使用 SenseVoice/FunASR；本地不可用时直接报错，不得降级到其他 ASR。
 - SenseVoice 默认模型为 `iic/SenseVoiceSmall`，默认语言为 `zh`。
-- 默认使用纯 SenseVoice 作为主转写和存疑时间戳来源，不强制挂 cam++ 或 VAD。
+- 默认使用纯 SenseVoice 作为主转写和存疑时间戳来源，不启用 cam++ 或 VAD。
 - `--output-format json|all` 会额外生成带时间锚点的 JSON；优先使用 SenseVoice 直接时间戳。
-- cam++ 说话人分离和 `fsmn-vad` 只在显式需要区分发言人或分段时启用。
-- 辅助模型保留为 `FunAudioLLM/Fun-ASR-Nano-2512`，用于对照校正公司名、金融术语、数字和英文缩写，不自动覆盖主转写。
-- 需要区分发言人时使用 `--speaker-diarization`。
-- 需要启用 SenseVoice VAD 分段时使用 `--sensevoice-vad`。
-- 需要说话人分离失败即报错时使用 `--require-speaker-diarization`。
-- 需要 `vtt`、`srt`、`tsv` 等字幕/时间戳格式时可显式使用 Whisper。
+- cam++ 说话人分离和 `fsmn-vad` 暂不进入默认维护链路。
+- 辅助模型保留为显式选项 `FunAudioLLM/Fun-ASR-Nano-2512`，用于对照校正公司名、金融术语、数字和英文缩写，不自动覆盖主转写。
+- 不支持为字幕格式降级调用其他 ASR；需要时间锚点时使用 SenseVoice/FunASR 的 `json` 或 `all` 输出。
 - 本仓库不打包模型权重或虚拟环境；部署环境应通过 `FUNASR_MODEL_CACHE`、`FUNASR_NANO_PYTHON` 等变量指向本地缓存和运行时。
 - macOS 本地 Dify 转写桥可用 `scripts/start_sensevoice_transcription_server.sh` 启动；对应 LaunchAgent 模板在 `skills/投资会议纪要整理/launchagents/com.kumaai.sensevoice-transcription-server.plist`，会固定本地模型缓存和虚拟环境，避免每次整理会议纪要时重新下载模型。
+
+运行期硬规则：
+
+- 正式整理会议时不得自动下载模型或安装 Python 依赖。
+- 缺少 SenseVoice/FunASR 依赖或本地模型缓存时，音频转写步骤必须失败并报告缺失项。
+- 可以继续处理用户已经提供的文本或人工转写稿，但不能假装音频已经完成转写。
+- 不允许因为 SenseVoice/FunASR 不可用而自动切换到 Whisper 或其他 ASR。
 
 ## 整理和输出规则
 
@@ -84,6 +91,7 @@
 - 只删除无意义语气词、无意义重复和明显 ASR 噪声。
 - 不编造催化、业绩数字、股票代码、客户名或结论。
 - 所有存疑内容必须正文内联标注，并进入最终存疑表。
+- 每条真实存疑必须先结合上下文和搜索/证据核验；`核验依据` 必须同时写明 `上下文：...` 和 `检索/证据：...`，不能只写“待确认”。
 
 不同会议类型的输出差异：
 
@@ -107,18 +115,21 @@
 - 优先参考官方披露、公司网站、交易所文件、监管/协会资料、行业报告和可靠财经/新闻来源。
 - 如果音频听感、上下文和外部证据无法统一，保留原始表述，正文加粗标注，并在存疑表列出候选解释。
 
-## Dify 人工复核链路
+## Dify adapter 边界
 
-在 Dify localhost 工作流中，必须经过两个人工关口：
+Dify 相关内容是调用层，不是核心 skill 输出规则。详细字段映射、review bridge、Skill Agent 分发和同步边界见：
 
-1. 上传文件并填写会议标题、会议类型、会议系列。
-2. 文本抽取或 SenseVoice 转写后，创建 `pre_agent` 初审草稿。
-3. 用户在初审页面校对转写稿、发言人、分段、公司名、代码、数字和关键术语。
-4. 初审确认后，Dify 以 `input_reviewed=true` 再次运行，才允许调用选定类型 skill。
-5. skill 生成 `post_agent` 二审草稿。
-6. 用户在富文本页面二审，确认存疑标注、正文和表格。
-7. 二审确认后生成 `final.md` 和结构化摘要/标的表等后处理产物。
-8. 只有用户点击归档确认后，才写入正式 Obsidian 目录、同步 Dify 知识库和 Google Drive。
+```text
+skills/投资会议纪要整理/references/dify_adapter_guide.md
+```
+
+保留以下边界：
+
+- Dify 负责编排上传、转写/抽取、初审、类型 skill 调用、二审、归档确认和同步。
+- 基础 skill 和类型 skill 负责正文整理规则与 Markdown 输出 contract。
+- Dify 节点不得在 skill 输出后重写正文结构。
+- `input_reviewed` 缺失或为 false 时，不得运行纪要格式化。
+- Dify 返回字段如 `review_url`、`draft_id`、`history_url` 只能放在工作流输出或元数据里，不进入终稿正文。
 
 未经确认的初始转写、模型草稿和二审前内容不得进入正式归档、Google Drive 或 Dify 知识库。
 
@@ -133,12 +144,13 @@
 - 材料类型使用 `文稿`、`录音`、`录像`、`附件`。
 - 同名冲突时保留所有文件，追加时间戳或数字后缀。
 - 只复制原始文件，不删除或移动用户原文件。
+- 自动化写入前可先运行 `archive_raw_inputs.py --dry-run --json` 预览最终路径。
 
 终稿归档：
 
 - 默认输出目录：`/Users/kumaai/Documents/Codex/workspace/投资纪要工作流/01 Projects/会议纪要/YYYY-MM-DD/`。
-- 同名 Markdown 和 Word 文件放在会议日期目录下。
-- 导出后同步整个 Obsidian 工作流目录到 `gdrive:投资纪要工作流存档/投资纪要工作流`。
+- 终稿文件优先命名为：`YYYY-MM-DD - 会议标题 - 会议类型.md` 和 `YYYY-MM-DD - 会议标题 - 会议类型.docx`。
+- 导出后只同步本次会议日期目录到 `gdrive:投资纪要工作流存档/投资纪要工作流/01 Projects/会议纪要/YYYY-MM-DD`，避免每次归档触发全量 Obsidian 工作流同步。
 - 终稿还会通过 `sync_minutes_to_dify_dataset.py` 写入 Dify `会议纪要整理知识库`。
 - 如果 Word、Dify 或 Google Drive 同步失败，保留本地 Markdown/Word，报告失败原因，不删除本地结果。
 - 清理历史输出时，只在明确要求下把旧文件移动到 `04 Archive/测试用`。
@@ -153,6 +165,8 @@ python3 skills/投资会议纪要整理/scripts/run_meeting_minutes_regression.p
 python3 skills/投资会议纪要整理/scripts/validate_meeting_minutes_contract.py NOTE.md
 python3 skills/投资会议纪要整理/scripts/validate_word_export.py NOTE.docx
 python3 skills/投资会议纪要整理/scripts/transcribe_audio.py --check-model-cache
+python3 skills/投资会议纪要整理/scripts/check_investment_workflow_health.py --strict
+python3 skills/投资会议纪要整理/scripts/archive_raw_inputs.py INPUT.docx INPUT.mp3 --date 2026-06-17 --title "会议标题" --dry-run --json
 python3 skills/meeting-minutes-sanitizer/scripts/sanitize_minutes.py NOTE.md --output-dir outputs
 ```
 
@@ -171,6 +185,7 @@ python3 skills/meeting-minutes-sanitizer/scripts/sanitize_minutes.py NOTE.md --o
 - Dify 私有 token 或数据集密钥。
 - Google Drive/rclone 凭证。
 - ASR 模型权重、下载缓存和 Python 虚拟环境。
+- Python wheels、平台相关二进制和其他部署期依赖缓存。
 - Obsidian 正式会议纪要、用户原始录音或转写原件。
 - 临时草稿、运行日志和 `__pycache__`。
 
