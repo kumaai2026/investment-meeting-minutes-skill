@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import cgi
 import json
 import os
 import sys
@@ -18,8 +17,15 @@ DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 8766
 
 sys.path.insert(0, str(SCRIPT_DIR))
+try:
+    import cgi  # type: ignore
+except ModuleNotFoundError:
+    import compat_cgi as cgi  # type: ignore
+
 from archive_raw_inputs import archive_files  # noqa: E402
-from export_to_obsidian import DEFAULT_VAULT_DIR, export_note, normalize_meeting_date, sync_vault_to_gdrive  # noqa: E402
+from export_to_obsidian import DEFAULT_REMOTE_DIR, export_note, normalize_meeting_date, sync_vault_to_gdrive  # noqa: E402
+
+RAW_ARCHIVE_DIR = Path("/Users/kumaai/Documents/Codex/workspace/投资纪要工作流/00 Inbox/会议原始记录")
 
 
 def _json_response(handler: BaseHTTPRequestHandler, status: int, payload: dict) -> None:
@@ -136,14 +142,17 @@ class ObsidianExportHandler(BaseHTTPRequestHandler):
                         str(path)
                         for path in archive_files(
                             local_files,
-                            Path("/Users/kumaai/Documents/Codex/workspace/投资纪要工作流/00 Inbox/会议原始记录"),
+                            RAW_ARCHIVE_DIR,
                             meeting_date,
                             meeting_title or None,
                         )
                     ]
 
             if archived_paths:
-                google_drive_synced, google_drive_message = sync_vault_to_gdrive(DEFAULT_VAULT_DIR)
+                google_drive_synced, google_drive_message = sync_vault_to_gdrive(
+                    RAW_ARCHIVE_DIR / meeting_date,
+                    f"{DEFAULT_REMOTE_DIR}/00 Inbox/会议原始记录/{meeting_date}",
+                )
             else:
                 google_drive_synced = False
                 google_drive_message = "跳过同步：无上传文件需要归档"

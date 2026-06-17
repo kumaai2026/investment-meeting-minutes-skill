@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-REQUIRED_TEXT = ["一、逐发言人原文整理", "二、存疑与待确认"]
+REQUIRED_TEXT = ["一、逐发言人原文整理"]
 FORBIDDEN_TEXT = ["AI结构化总结", "标的汇总表", "三、处理说明", "三、标的汇总表", "四、存疑与待确认", "输入来源", "整理说明"]
 METADATA_BOLD_LABELS = {
     "会议日期",

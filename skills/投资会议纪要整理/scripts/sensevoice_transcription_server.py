@@ -3,38 +3,139 @@
 
 from __future__ import annotations
 
-import cgi
 import difflib
+import io
 import json
 import os
 import subprocess
 import sys
 import tempfile
+from email.parser import BytesParser
+from email.policy import default as email_policy
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-DEFAULT_HOST = "0.0.0.0"
+DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
 SCRIPT_DIR = Path(__file__).resolve().parent
 TRANSCRIBE_SCRIPT = SCRIPT_DIR / "transcribe_audio.py"
 LOG_DIR = Path("/Users/kumaai/Library/Logs/kumaai-sync")
 DEFAULT_PRIMARY_ENGINE = "sensevoice"
 DEFAULT_PRIMARY_MODEL = "iic/SenseVoiceSmall"
-DEFAULT_AUX_ENGINE = os.environ.get("SENSEVOICE_BRIDGE_AUX_ENGINE", "fun-asr-nano")
+DEFAULT_AUX_ENGINE = os.environ.get("SENSEVOICE_BRIDGE_AUX_ENGINE", "").strip().lower()
 DEFAULT_NANO_MODEL = "FunAudioLLM/Fun-ASR-Nano-2512"
 DEFAULT_NANO_HUB = os.environ.get("FUNASR_NANO_HUB", "ms")
 DEFAULT_MODEL_CACHE = os.environ.get(
     "FUNASR_MODEL_CACHE",
-    "/Users/kumaai/Documents/Codex/workspace/投资纪要工作流/03 Resources/asr-model-cache",
+    "/Users/nananaranja/Documents/Codex/asr-model-cache",
 )
 DEFAULT_NANO_PYTHON = os.environ.get(
     "FUNASR_NANO_PYTHON",
-    "/Users/kumaai/Documents/Codex/workspace/投资纪要工作流/03 Resources/asr-runtimes/funasr-nano-venv/bin/python",
+    "/Users/nananaranja/Documents/会议纪要整理/.transcribe-venv/bin/python",
 )
 DEFAULT_HOTWORDS = (
     "半导体,算力,AI眼镜,液冷,CPO,PCB,光模块,光芯片,东田微,依米康,"
     "信测标准,中芯国际,中微公司,工业富联,北方华创,中际旭创,胜蓝股份"
 )
+
+LOG_DIR = Path(os.environ.get("KUMAAI_SYNC_LOG_DIR", str(Path.home() / "Library/Logs/kumaai-sync")))
+MODEL_REQUIREMENTS = {
+    "sensevoice": ("iic/SenseVoiceSmall", ("config.yaml", "model.pt")),
+    "vad": ("iic/speech_fsmn_vad_zh-cn-16k-common-pytorch", ("config.yaml", "model.pt")),
+    "punc": ("iic/punc_ct-transformer_cn-en-common-vocab471067-large", ("config.yaml", "model.pt")),
+    "speaker_diarization": ("iic/speech_campplus_sv_zh-cn_16k-common", ("config.yaml", "campplus_cn_common.bin")),
+    "fun_asr_nano": ("FunAudioLLM/Fun-ASR-Nano-2512", ("configuration.json",)),
+}
+
+
+class UploadedFormFile:
+    def __init__(self, filename: str, data: bytes) -> None:
+        self.filename = filename
+        self.file = io.BytesIO(data)
+
+
+class MultipartForm:
+    def __init__(self) -> None:
+        self.fields: dict[str, object] = {}
+        self.files: dict[str, object] = {}
+
+    def add_field(self, key: str, value: str) -> None:
+        _append_form_value(self.fields, key, value)
+
+    def add_file(self, key: str, value: UploadedFormFile) -> None:
+        _append_form_value(self.files, key, value)
+
+    def __contains__(self, key: str) -> bool:
+        return key in self.fields or key in self.files
+
+    def __getitem__(self, key: str) -> object:
+        value = self.files[key] if key in self.files else self.fields[key]
+        return value[0] if isinstance(value, list) else value
+
+    def getvalue(self, key: str) -> object:
+        return self.fields.get(key, "")
+
+
+def _append_form_value(store: dict[str, object], key: str, value: object) -> None:
+    current = store.get(key)
+    if current is None:
+        store[key] = value
+    elif isinstance(current, list):
+        current.append(value)
+    else:
+        store[key] = [current, value]
+
+
+def _parse_multipart_form(handler: BaseHTTPRequestHandler, content_type: str) -> MultipartForm:
+    try:
+        content_length = int(handler.headers.get("Content-Length", "0") or "0")
+    except ValueError as exc:
+        raise ValueError("invalid Content-Length") from exc
+    body = handler.rfile.read(content_length) if content_length > 0 else b""
+    message = BytesParser(policy=email_policy).parsebytes(
+        f"Content-Type: {content_type}\r\nMIME-Version: 1.0\r\n\r\n".encode("utf-8") + body
+    )
+    form = MultipartForm()
+    if not message.is_multipart():
+        return form
+    for part in message.iter_parts():
+        if part.get_content_disposition() != "form-data":
+            continue
+        name = part.get_param("name", header="content-disposition")
+        if not name:
+            continue
+        payload = part.get_payload(decode=True) or b""
+        filename = part.get_filename()
+        if filename:
+            form.add_file(name, UploadedFormFile(filename, payload))
+            continue
+        charset = part.get_content_charset() or "utf-8"
+        form.add_field(name, payload.decode(charset, errors="replace"))
+    return form
+
+
+def _model_cache_status() -> dict:
+    root = Path(DEFAULT_MODEL_CACHE).expanduser()
+    models = {}
+    for name, (relative_path, required_files) in MODEL_REQUIREMENTS.items():
+        candidates = [root / "modelscope" / "models" / relative_path, root / "modelscope" / relative_path]
+        path = next(
+            (
+                item
+                for item in candidates
+                if item.exists() and all((item / required).exists() for required in required_files)
+            ),
+            candidates[0],
+        )
+        missing = [item for item in required_files if not (path / item).exists()]
+        models[name] = {
+            "path": str(path),
+            "exists": path.exists(),
+            "complete": path.exists() and not missing,
+            "missing": missing,
+            "checked_paths": [str(item) for item in candidates],
+        }
+    return {"cache_root": str(root), "python": DEFAULT_NANO_PYTHON, "models": models}
 
 
 def _json_response(handler: BaseHTTPRequestHandler, status: int, payload: dict) -> None:
@@ -55,7 +156,7 @@ def _clean_filename(filename: str | None) -> str:
     return "".join(keep).strip() or "audio_upload"
 
 
-def _field_text(form: cgi.FieldStorage, key: str, default: str = "") -> str:
+def _field_text(form: MultipartForm, key: str, default: str = "") -> str:
     if key not in form:
         return default
     value = form.getvalue(key)
@@ -64,20 +165,31 @@ def _field_text(form: cgi.FieldStorage, key: str, default: str = "") -> str:
     return str(value or default).strip()
 
 
-def _read_latest_txt(output_dir: Path, stem: str) -> str:
+def _read_transcript_txt(output_dir: Path, stem: str) -> str:
     text_path = output_dir / f"{stem}.txt"
-    if not text_path.exists():
-        candidates = sorted(output_dir.glob("*.txt"), key=lambda item: item.stat().st_mtime, reverse=True)
-        text_path = candidates[0] if candidates else text_path
     return text_path.read_text(encoding="utf-8", errors="replace").strip() if text_path.exists() else ""
+
+
+def _read_transcript_json(output_dir: Path, stem: str) -> dict:
+    json_path = output_dir / f"{stem}.json"
+    if not json_path.exists():
+        return {}
+    try:
+        data = json.loads(json_path.read_text(encoding="utf-8", errors="replace"))
+    except json.JSONDecodeError:
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
 def _run_transcribe(command: list[str], output_dir: Path, stem: str, timeout: int = 7200) -> tuple[bool, str, str]:
     env = dict(os.environ)
     env.setdefault("PYTHONUTF8", "1")
     env.setdefault("PYTHONIOENCODING", "utf-8")
+    env.setdefault("FUNASR_MODEL_CACHE", DEFAULT_MODEL_CACHE)
+    env.setdefault("MODELSCOPE_CACHE", str(Path(DEFAULT_MODEL_CACHE).expanduser() / "modelscope"))
+    env.setdefault("HF_HOME", str(Path(DEFAULT_MODEL_CACHE).expanduser() / "huggingface"))
     completed = subprocess.run(command, text=True, capture_output=True, env=env, timeout=timeout)
-    text = _read_latest_txt(output_dir, stem)
+    text = _read_transcript_txt(output_dir, stem)
     error = ""
     if completed.returncode != 0:
         error = (completed.stderr or completed.stdout or "transcription failed").strip()
@@ -94,9 +206,22 @@ def _diff_summary(primary_text: str, auxiliary_text: str, limit: int = 5000) -> 
         tofile="fun-asr-nano",
         lineterm="",
     )
-    text = "\n".join(diff).strip()
-    if len(text) > limit:
-        text = text[:limit].rstrip() + "\n...（差异过长，已截断）"
+    chunks: list[str] = []
+    total = 0
+    truncated = False
+    for line in diff:
+        line_length = len(line) + 1
+        if total + line_length > limit:
+            remaining = max(limit - total, 0)
+            if remaining:
+                chunks.append(line[:remaining].rstrip())
+            truncated = True
+            break
+        chunks.append(line)
+        total += line_length
+    text = "\n".join(chunks).strip()
+    if truncated:
+        text = text.rstrip() + "\n...（差异过长，已截断）"
     return text
 
 
@@ -121,6 +246,7 @@ class SenseVoiceHandler(BaseHTTPRequestHandler):
                     "primary_model": DEFAULT_PRIMARY_MODEL,
                     "auxiliary_engine": DEFAULT_AUX_ENGINE,
                     "auxiliary_model": DEFAULT_NANO_MODEL if DEFAULT_AUX_ENGINE == "fun-asr-nano" else "",
+                    "model_cache": _model_cache_status(),
                 },
             )
             return
@@ -136,7 +262,11 @@ class SenseVoiceHandler(BaseHTTPRequestHandler):
             _json_response(self, 400, {"ok": False, "error": "multipart/form-data required", "text": ""})
             return
 
-        form = cgi.FieldStorage(fp=self.rfile, headers=self.headers, environ={"REQUEST_METHOD": "POST"})
+        try:
+            form = _parse_multipart_form(self, content_type)
+        except ValueError as exc:
+            _json_response(self, 400, {"ok": False, "error": str(exc), "text": ""})
+            return
         file_item = form["audio"] if "audio" in form else None
         if file_item is None or not getattr(file_item, "filename", None):
             _json_response(self, 200, {"ok": True, "engine": "sensevoice", "model": DEFAULT_PRIMARY_MODEL, "text": ""})
@@ -156,7 +286,7 @@ class SenseVoiceHandler(BaseHTTPRequestHandler):
             auxiliary_dir.mkdir()
 
             command = [
-                sys.executable,
+                DEFAULT_NANO_PYTHON if Path(DEFAULT_NANO_PYTHON).exists() else sys.executable,
                 str(TRANSCRIBE_SCRIPT),
                 str(audio_path),
                 "--engine",
@@ -164,13 +294,16 @@ class SenseVoiceHandler(BaseHTTPRequestHandler):
                 "--output-dir",
                 str(primary_dir),
                 "--output-format",
-                "txt",
+                "all",
                 "--language",
                 "zh",
             ]
             if DEFAULT_MODEL_CACHE:
                 command.extend(["--cache-dir", DEFAULT_MODEL_CACHE])
             primary_ok, text, primary_error = _run_transcribe(command, primary_dir, "input")
+            primary_json = _read_transcript_json(primary_dir, "input")
+            timestamp_segments = primary_json.get("sentence_info") if isinstance(primary_json.get("sentence_info"), list) else []
+            speaker_segments = [item for item in timestamp_segments if isinstance(item, dict) and item.get("speaker")]
             payload = {
                 "ok": primary_ok,
                 "engine": "sensevoice",
@@ -179,6 +312,13 @@ class SenseVoiceHandler(BaseHTTPRequestHandler):
                 "primary_model": DEFAULT_PRIMARY_MODEL,
                 "filename": filename,
                 "text": text,
+                "speaker_diarization_enabled": bool(primary_json.get("speaker_diarization_enabled")),
+                "speaker_diarization_detected": bool(primary_json.get("speaker_diarization_detected")),
+                "timestamp_detected": bool(primary_json.get("timestamp_detected")),
+                "speakers": primary_json.get("speakers") or [],
+                "speaker_segments": speaker_segments,
+                "timestamp_segments": timestamp_segments,
+                "sentence_info": timestamp_segments,
             }
             if not primary_ok:
                 payload["error"] = primary_error or "SenseVoice transcription failed"

@@ -6,14 +6,17 @@ Copy raw meeting input files into the dated investment-meeting inbox archive.
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import shutil
 import sys
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 DEFAULT_ARCHIVE_ROOT = Path("/Users/kumaai/Documents/Codex/workspace/投资纪要工作流/00 Inbox/会议原始记录")
 INVALID_FILENAME_CHARS = r'[\\/:*?"<>|]+'
+DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 TYPE_LABELS = {
     ".docx": "文稿",
     ".doc": "文稿",
@@ -42,6 +45,16 @@ def sanitize_filename(value: str, *, fallback: str = "未命名会议", max_leng
 
 def material_label(path: Path) -> str:
     return TYPE_LABELS.get(path.suffix.lower(), "附件")
+
+
+def normalize_archive_date(value: str) -> str:
+    raw = (value or "").strip()
+    if not DATE_PATTERN.match(raw):
+        raise ValueError(f"归档日期必须使用 YYYY-MM-DD: {value}")
+    try:
+        return datetime.strptime(raw, "%Y-%m-%d").strftime("%Y-%m-%d")
+    except ValueError as exc:
+        raise ValueError(f"归档日期无效: {value}") from exc
 
 
 def standardized_filename(source: Path, archive_date: str, index: int, meeting_title: str | None) -> str:
@@ -80,9 +93,10 @@ def infer_meeting_title(files: list[Path]) -> str | None:
     return None
 
 
-def unique_target_path(target_dir: Path, filename: str) -> Path:
+def unique_target_path(target_dir: Path, filename: str, reserved: set[Path] | None = None) -> Path:
+    reserved = reserved or set()
     target = target_dir / filename
-    if not target.exists():
+    if not target.exists() and target not in reserved:
         return target
 
     stem = target.stem
@@ -90,10 +104,52 @@ def unique_target_path(target_dir: Path, filename: str) -> Path:
     timestamp = datetime.now().strftime("%H%M%S")
     candidate = target_dir / f"{stem}-{timestamp}{suffix}"
     counter = 2
-    while candidate.exists():
+    while candidate.exists() or candidate in reserved:
         candidate = target_dir / f"{stem}-{timestamp}-{counter}{suffix}"
         counter += 1
     return candidate
+
+
+def plan_archive_files(
+    files: list[Path],
+    archive_root: Path,
+    archive_date: str,
+    meeting_title: str | None = None,
+) -> dict[str, Any]:
+    archive_date = normalize_archive_date(archive_date)
+    resolved_files = [source.expanduser().resolve() for source in files]
+    for resolved in resolved_files:
+        if not resolved.exists():
+            raise FileNotFoundError(f"输入文件不存在: {resolved}")
+        if not resolved.is_file():
+            raise IsADirectoryError(f"输入路径不是文件: {resolved}")
+
+    resolved_title = meeting_title or infer_meeting_title(resolved_files)
+    if not resolved_title and resolved_files:
+        resolved_title = resolved_files[0].stem
+    target_dir = archive_root / archive_date / meeting_folder_name(archive_date, resolved_title)
+
+    reserved: set[Path] = set()
+    planned_files: list[dict[str, str]] = []
+    for index, resolved in enumerate(resolved_files, 1):
+        target_name = standardized_filename(resolved, archive_date, index, resolved_title)
+        target = unique_target_path(target_dir, target_name, reserved)
+        reserved.add(target)
+        planned_files.append(
+            {
+                "source": str(resolved),
+                "target": str(target),
+                "filename": target.name,
+                "material_type": material_label(resolved),
+            }
+        )
+    return {
+        "archive_root": str(archive_root),
+        "archive_date": archive_date,
+        "meeting_title": sanitize_filename(resolved_title or ""),
+        "target_dir": str(target_dir),
+        "files": planned_files,
+    }
 
 
 def archive_files(
@@ -102,23 +158,15 @@ def archive_files(
     archive_date: str,
     meeting_title: str | None = None,
 ) -> list[Path]:
-    resolved_files = [source.expanduser().resolve() for source in files]
-    resolved_title = meeting_title or infer_meeting_title(resolved_files)
-    if not resolved_title and resolved_files:
-        resolved_title = resolved_files[0].stem
-    target_dir = archive_root / archive_date / meeting_folder_name(archive_date, resolved_title)
+    plan = plan_archive_files(files, archive_root, archive_date, meeting_title)
+    target_dir = Path(str(plan["target_dir"]))
     target_dir.mkdir(parents=True, exist_ok=True)
 
     copied: list[Path] = []
-    for index, resolved in enumerate(resolved_files, 1):
-        if not resolved.exists():
-            raise FileNotFoundError(f"输入文件不存在: {resolved}")
-        if not resolved.is_file():
-            raise IsADirectoryError(f"输入路径不是文件: {resolved}")
-
-        target_name = standardized_filename(resolved, archive_date, index, resolved_title)
-        target = unique_target_path(target_dir, target_name)
-        shutil.copy2(resolved, target)
+    for item in plan["files"]:
+        source = Path(str(item["source"]))
+        target = Path(str(item["target"]))
+        shutil.copy2(source, target)
         copied.append(target)
     return copied
 
@@ -129,18 +177,45 @@ def main() -> int:
     parser.add_argument("--archive-root", default=str(DEFAULT_ARCHIVE_ROOT), help=f"归档根目录，默认 {DEFAULT_ARCHIVE_ROOT}")
     parser.add_argument("--date", default=datetime.now().strftime("%Y-%m-%d"), help="归档日期，格式 YYYY-MM-DD")
     parser.add_argument("--title", help="会议标题，用于生成规范归档文件名")
+    parser.add_argument("--dry-run", action="store_true", help="只预览目标路径，不复制文件")
+    parser.add_argument("--json", action="store_true", help="输出 JSON，便于 Dify/自动化调用")
     args = parser.parse_args()
 
     try:
-        copied = archive_files(
-            [Path(item) for item in args.files],
-            Path(args.archive_root).expanduser().resolve(),
-            args.date,
-            args.title,
-        )
+        archive_root = Path(args.archive_root).expanduser().resolve()
+        input_files = [Path(item) for item in args.files]
+        if args.dry_run:
+            plan = plan_archive_files(input_files, archive_root, args.date, args.title)
+            payload = {"ok": True, "dry_run": True, **plan}
+            if args.json:
+                print(json.dumps(payload, ensure_ascii=False, indent=2))
+            else:
+                for item in plan["files"]:
+                    print(item["target"])
+            return 0
+
+        copied = archive_files(input_files, archive_root, args.date, args.title)
     except Exception as exc:
-        print(f"归档失败: {exc}", file=sys.stderr)
+        if args.json:
+            print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False, indent=2), file=sys.stderr)
+        else:
+            print(f"归档失败: {exc}", file=sys.stderr)
         return 1
+
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "ok": True,
+                    "dry_run": False,
+                    "archived_count": len(copied),
+                    "archived_paths": [str(path) for path in copied],
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 0
 
     for path in copied:
         print(path)

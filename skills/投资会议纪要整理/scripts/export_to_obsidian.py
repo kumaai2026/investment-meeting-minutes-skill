@@ -16,7 +16,7 @@ from datetime import datetime
 from pathlib import Path
 
 DEFAULT_EXPORT_DIR = Path("/Users/kumaai/Documents/Codex/workspace/投资纪要工作流/01 Projects/会议纪要")
-DEFAULT_VAULT_DIR = Path("/Users/kumaai/Documents/Codex/workspace/投资纪要工作流")
+DEFAULT_REMOTE_DIR = "gdrive:投资纪要工作流存档/投资纪要工作流"
 INVALID_FILENAME_CHARS = r'[\\/:*?"<>|]+'
 CJK_PATTERN = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
 
@@ -105,7 +105,7 @@ def detect_filename_title(content: str, fallback: str) -> str:
         display_title = h1_title
 
     if meeting_type and meeting_type not in display_title:
-        display_title = f"{meeting_type} - {display_title}"
+        display_title = f"{display_title} - {meeting_type}"
     return sanitize_filename(display_title)
 
 
@@ -396,7 +396,7 @@ def convert_markdown_to_docx(source_md: Path, target_docx: Path) -> tuple[bool, 
     return True, "ok"
 
 
-def sync_vault_to_gdrive(vault_dir: Path) -> tuple[bool, str]:
+def sync_vault_to_gdrive(local_dir: Path, remote_dir: str | None = None) -> tuple[bool, str]:
     sync_script = Path(__file__).with_name("sync_obsidian_to_gdrive.py")
     if not sync_script.exists():
         return False, f"同步脚本不存在: {sync_script}"
@@ -405,15 +405,19 @@ def sync_vault_to_gdrive(vault_dir: Path) -> tuple[bool, str]:
     log_file.parent.mkdir(parents=True, exist_ok=True)
     try:
         handle = log_file.open("a", encoding="utf-8")
+        command = [sys.executable, str(sync_script), "--local-dir", str(local_dir)]
+        if remote_dir:
+            command.extend(["--remote-dir", remote_dir])
         subprocess.Popen(
-            [sys.executable, str(sync_script), "--local-dir", str(vault_dir)],
+            command,
             stdout=handle,
             stderr=subprocess.STDOUT,
             start_new_session=True,
         )
     except Exception as exc:
         return False, f"Google Drive 后台同步启动失败: {exc}"
-    return True, "已触发 Google Drive 后台同步"
+    target = remote_dir or DEFAULT_REMOTE_DIR
+    return True, f"已触发 Google Drive 后台同步: {local_dir} -> {target}"
 
 
 def organize_archive_before_sync() -> tuple[bool, str]:
@@ -455,7 +459,8 @@ def export_note(source_file: Path, export_dir: Path, date_override: str | None) 
     sync_message = "跳过同步：Markdown 或 Word 未全部生成"
     if md_ok and docx_ok:
         archive_ok, archive_message = organize_archive_before_sync()
-        sync_ok, sync_message = sync_vault_to_gdrive(DEFAULT_VAULT_DIR)
+        sync_remote_dir = f"{DEFAULT_REMOTE_DIR}/01 Projects/会议纪要/{meeting_date}"
+        sync_ok, sync_message = sync_vault_to_gdrive(export_dir, sync_remote_dir)
         if not archive_ok:
             sync_message = f"{sync_message}; 归档整理未完成: {archive_message}"
 

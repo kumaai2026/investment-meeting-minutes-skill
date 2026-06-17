@@ -6,13 +6,18 @@ from __future__ import annotations
 import argparse
 import glob
 import hashlib
+import importlib.util
 import json
+import math
 import os
 import re
 import shutil
 import sqlite3
+import struct
 import subprocess
 import sys
+import tempfile
+import wave
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -58,6 +63,12 @@ TYPE_SKILL_NAMES = [
     "投资会议纪要-其他",
 ]
 WECHAT_LAUNCH_AGENT_PATH = Path("/Users/kumaai/Library/LaunchAgents/com.kumaai.wechat-tools-bridge.plist")
+DEFAULT_ASR_RUNTIME_PYTHON = Path(
+    os.environ.get(
+        "FUNASR_NANO_PYTHON",
+        "/Users/nananaranja/Documents/会议纪要整理/.transcribe-venv/bin/python",
+    )
+)
 
 REQUIRED_DIFY_SERVICES = {
     "nginx",
@@ -72,6 +83,14 @@ REQUIRED_DIFY_SERVICES = {
     "sandbox",
     "ssrf_proxy",
 }
+
+STRICT_RUNTIME_MODULES = [
+    ("Python 依赖: funasr", "funasr"),
+    ("Python 依赖: modelscope", "modelscope"),
+    ("Python 依赖: soundfile", "soundfile"),
+    ("Python 依赖: librosa", "librosa"),
+    ("Python 依赖: python-docx", "docx"),
+]
 
 
 def now_iso() -> str:
@@ -140,12 +159,217 @@ def command_exists_check(name: str, command: str, fallback: Path | None = None) 
     return check("warning", name, "命令未找到", command=command)
 
 
+def asr_runtime_python() -> Path:
+    if DEFAULT_ASR_RUNTIME_PYTHON.exists():
+        return DEFAULT_ASR_RUNTIME_PYTHON
+    return Path(sys.executable)
+
+
+def python_module_check(name: str, module: str, *, strict: bool, python_executable: Path | None = None) -> dict[str, Any]:
+    python_path = python_executable or Path(sys.executable)
+    if python_path == Path(sys.executable) and importlib.util.find_spec(module):
+        return check("ok", name, "模块可导入", module=module, python=str(python_path))
+    probe = "import importlib.util, sys; sys.exit(0 if importlib.util.find_spec(sys.argv[1]) else 1)"
+    returncode, stdout, stderr = run_command([str(python_path), "-c", probe, module], timeout=10)
+    if returncode == 0:
+        return check("ok", name, "模块可导入", module=module, python=str(python_path))
+    status = "error" if strict else "warning"
+    return check(
+        status,
+        name,
+        "模块不可导入；运行期禁止临时安装依赖",
+        module=module,
+        python=str(python_path),
+        stderr=stderr.strip(),
+    )
+
+
 def run_command(args: list[str], *, cwd: Path | None = None, timeout: int = 20) -> tuple[int, str, str]:
     env = os.environ.copy()
     env["PYTHONUTF8"] = "1"
     env["PYTHONIOENCODING"] = "utf-8"
-    result = subprocess.run(args, cwd=cwd, text=True, capture_output=True, timeout=timeout, env=env)
+    try:
+        result = subprocess.run(args, cwd=cwd, text=True, capture_output=True, timeout=timeout, env=env)
+    except FileNotFoundError as exc:
+        return 127, "", str(exc)
     return result.returncode, result.stdout, result.stderr
+
+
+def asr_model_cache_check(*, strict: bool) -> dict[str, Any]:
+    script = SCRIPT_DIR / "transcribe_audio.py"
+    if not script.exists():
+        return check("error", "ASR 模型缓存", "转写脚本不存在", path=str(script))
+    try:
+        returncode, stdout, stderr = run_command([sys.executable, str(script), "--check-model-cache"], timeout=30)
+    except subprocess.TimeoutExpired:
+        status = "error" if strict else "warning"
+        return check(status, "ASR 模型缓存", "模型缓存检查超时", path=str(script))
+    try:
+        payload = json.loads(stdout)
+    except json.JSONDecodeError as exc:
+        status = "error" if strict else "warning"
+        return check(
+            status,
+            "ASR 模型缓存",
+            f"模型缓存检查输出不是 JSON: {exc}",
+            stdout=stdout[-2000:],
+            stderr=stderr[-2000:],
+        )
+
+    models = payload.get("models") if isinstance(payload.get("models"), dict) else {}
+    required_incomplete = {
+        name: model
+        for name, model in models.items()
+        if name == "sensevoice" and isinstance(model, dict) and not model.get("complete")
+    }
+    optional_incomplete = {
+        name: model
+        for name, model in models.items()
+        if name != "sensevoice" and isinstance(model, dict) and not model.get("complete")
+    }
+    if returncode == 0 and not required_incomplete:
+        return check(
+            "ok",
+            "ASR 模型缓存",
+            "纯 SenseVoice 必需模型缓存完整；Nano/VAD/说话人分离按辅助能力处理",
+            cache_root=payload.get("cache_root"),
+            models=models,
+            optional_incomplete=optional_incomplete,
+        )
+    status = "error" if strict else "warning"
+    return check(
+        status,
+        "ASR 模型缓存",
+        "纯 SenseVoice 必需模型缓存不完整；运行期禁止远程查找或下载模型",
+        cache_root=payload.get("cache_root"),
+        incomplete=required_incomplete,
+        optional_incomplete=optional_incomplete,
+        stderr=stderr.strip(),
+    )
+
+
+def sensevoice_service_model_cache_check(*, strict: bool) -> dict[str, Any]:
+    name = "SenseVoice 服务模型缓存"
+    request = Request("http://127.0.0.1:8765/health", headers={"User-Agent": "investment-workflow-health/1.0"})
+    try:
+        with urlopen(request, timeout=5) as response:
+            payload = json.loads(response.read(128 * 1024).decode("utf-8", errors="replace"))
+    except Exception as exc:  # noqa: BLE001
+        status = "error" if strict else "warning"
+        return check(status, name, f"无法读取服务健康状态: {exc}", url="http://127.0.0.1:8765/health")
+
+    model_cache = payload.get("model_cache") if isinstance(payload.get("model_cache"), dict) else {}
+    models = model_cache.get("models") if isinstance(model_cache.get("models"), dict) else {}
+    required_incomplete = {
+        model_name: model
+        for model_name, model in models.items()
+        if model_name == "sensevoice" and isinstance(model, dict) and not model.get("complete")
+    }
+    optional_incomplete = {
+        model_name: model
+        for model_name, model in models.items()
+        if model_name != "sensevoice" and isinstance(model, dict) and not model.get("complete")
+    }
+    if payload.get("ok") is True and models and not required_incomplete:
+        return check(
+            "ok",
+            name,
+            "服务使用的纯 SenseVoice 必需模型缓存完整；Nano/VAD/说话人分离按辅助能力处理",
+            cache_root=model_cache.get("cache_root"),
+            python=model_cache.get("python"),
+            optional_incomplete=optional_incomplete,
+        )
+    status = "error" if strict else "warning"
+    return check(
+        status,
+        name,
+        "服务使用的纯 SenseVoice 必需模型缓存不完整；运行期禁止远程下载模型",
+        cache_root=model_cache.get("cache_root"),
+        python=model_cache.get("python"),
+        incomplete=required_incomplete,
+        optional_incomplete=optional_incomplete,
+    )
+
+
+def write_smoke_wav(path: Path, *, seconds: float = 0.6, sample_rate: int = 16000) -> None:
+    frame_count = int(seconds * sample_rate)
+    amplitude = 8000
+    frequency = 440.0
+    with wave.open(str(path), "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(sample_rate)
+        frames = bytearray()
+        for index in range(frame_count):
+            sample = int(amplitude * math.sin(2 * math.pi * frequency * index / sample_rate))
+            frames.extend(struct.pack("<h", sample))
+        handle.writeframes(bytes(frames))
+
+
+def sensevoice_service_smoke_check(*, strict: bool) -> dict[str, Any]:
+    name = "SenseVoice 服务转写 smoke"
+    boundary = "----investment-meeting-smoke-boundary"
+    with tempfile.TemporaryDirectory(prefix="meeting-asr-smoke-") as tmp:
+        audio_path = Path(tmp) / "smoke.wav"
+        write_smoke_wav(audio_path)
+        audio_bytes = audio_path.read_bytes()
+        body = b"".join(
+            [
+                f"--{boundary}\r\n".encode("utf-8"),
+                b'Content-Disposition: form-data; name="audio"; filename="smoke.wav"\r\n',
+                b"Content-Type: audio/wav\r\n\r\n",
+                audio_bytes,
+                f"\r\n--{boundary}--\r\n".encode("utf-8"),
+            ]
+        )
+    request = Request(
+        "http://127.0.0.1:8765/transcribe",
+        data=body,
+        headers={
+            "Content-Type": f"multipart/form-data; boundary={boundary}",
+            "User-Agent": "investment-workflow-health/1.0",
+        },
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=120) as response:
+            payload = json.loads(response.read(256 * 1024).decode("utf-8", errors="replace"))
+    except HTTPError as exc:
+        try:
+            payload = json.loads(exc.read(256 * 1024).decode("utf-8", errors="replace"))
+        except Exception:
+            payload = {"error": str(exc)}
+        status = "error" if strict else "warning"
+        return check(status, name, f"HTTP {exc.code}", url="http://127.0.0.1:8765/transcribe", payload=payload)
+    except Exception as exc:  # noqa: BLE001
+        status = "error" if strict else "warning"
+        return check(status, name, f"转写 smoke 失败: {exc}", url="http://127.0.0.1:8765/transcribe")
+
+    if payload.get("ok") is True:
+        return check(
+            "ok",
+            name,
+            "服务完成真实转写调用",
+            engine=payload.get("engine"),
+            model=payload.get("model"),
+            timestamp_detected=payload.get("timestamp_detected"),
+            text_preview=str(payload.get("text") or "")[:80],
+        )
+    status = "error" if strict else "warning"
+    return check(status, name, "服务返回 ok=false", payload=payload)
+
+
+def strict_runtime_checks(strict: bool, *, runtime_smoke: bool = False) -> list[dict[str, Any]]:
+    runtime_python = asr_runtime_python()
+    checks = [
+        python_module_check(name, module, strict=strict, python_executable=runtime_python)
+        for name, module in STRICT_RUNTIME_MODULES
+    ]
+    checks.append(asr_model_cache_check(strict=strict))
+    checks.append(sensevoice_service_model_cache_check(strict=strict))
+    if runtime_smoke:
+        checks.append(sensevoice_service_smoke_check(strict=strict))
+    return checks
 
 
 def docker_check() -> dict[str, Any]:
@@ -485,7 +709,7 @@ def skill_sync_checks() -> list[dict[str, Any]]:
     return checks
 
 
-def collect_checks(include_public: bool) -> list[dict[str, Any]]:
+def collect_checks(include_public: bool, *, strict: bool = False, runtime_smoke: bool = False) -> list[dict[str, Any]]:
     checks: list[dict[str, Any]] = [
         path_check("Obsidian Vault", VAULT_DIR, writable=True),
         path_check("原始记录归档目录", RAW_DIR, writable=True),
@@ -524,6 +748,8 @@ def collect_checks(include_public: bool) -> list[dict[str, Any]]:
         access_control_check(),
         access_audit_log_check(),
     ]
+    if strict:
+        checks.extend(strict_runtime_checks(strict=True, runtime_smoke=runtime_smoke))
     checks.extend(skill_sync_checks())
     if include_public:
         checks.append(public_access_check())
@@ -572,10 +798,18 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="一键检查投资会议纪要工作流本机健康状态")
     parser.add_argument("--json", action="store_true", help="输出 JSON")
     parser.add_argument("--include-public", action="store_true", help="额外检查公网域名 kuma.d91.global")
+    parser.add_argument("--strict", action="store_true", help="正式运行前严格检查本地依赖和 ASR 模型缓存；缺失即失败，不触发下载")
+    parser.add_argument("--runtime-smoke", action="store_true", help="在 --strict 中额外调用 SenseVoice 服务执行真实短音频转写；耗时较长")
     args = parser.parse_args()
 
-    checks = collect_checks(include_public=args.include_public)
-    report = {"generated_at": now_iso(), "summary": summarize(checks), "checks": checks}
+    checks = collect_checks(include_public=args.include_public, strict=args.strict, runtime_smoke=args.runtime_smoke)
+    report = {
+        "generated_at": now_iso(),
+        "strict": bool(args.strict),
+        "runtime_smoke": bool(args.runtime_smoke),
+        "summary": summarize(checks),
+        "checks": checks,
+    }
     if args.json:
         print(json.dumps(report, ensure_ascii=False, indent=2))
     else:

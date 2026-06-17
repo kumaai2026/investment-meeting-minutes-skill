@@ -28,7 +28,12 @@ def read_cases(path: Path) -> list[dict[str, Any]]:
 def run_case(case: dict[str, Any], base_dir: Path) -> dict[str, Any]:
     file_path = base_dir / str(case["file"])
     markdown = file_path.read_text(encoding="utf-8")
-    result = validate_contract(markdown, required_terms=[str(term) for term in case.get("required_terms", [])])
+    result = validate_contract(
+        markdown,
+        required_terms=[str(term) for term in case.get("required_terms", [])],
+        source_mode=str(case.get("source_mode") or case.get("mode") or "auto"),
+        require_audio_timestamps=bool(case.get("require_audio_timestamps")),
+    )
     return {
         "name": case.get("name") or file_path.stem,
         "mode": case.get("mode") or "",

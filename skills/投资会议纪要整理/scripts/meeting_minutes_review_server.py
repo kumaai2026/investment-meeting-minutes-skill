@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import html
-import cgi
 import difflib
 import hashlib
 import hmac
@@ -33,6 +32,11 @@ from uuid import uuid4
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
+
+try:
+    import cgi  # type: ignore
+except ModuleNotFoundError:
+    import compat_cgi as cgi  # type: ignore
 
 from export_to_obsidian import DEFAULT_EXPORT_DIR, export_note, normalize_meeting_date  # noqa: E402
 from archive_raw_inputs import DEFAULT_ARCHIVE_ROOT as RAW_ARCHIVE_ROOT, archive_files as archive_raw_files  # noqa: E402
@@ -90,11 +94,11 @@ DEFAULT_FUNASR_NANO_MODEL = "FunAudioLLM/Fun-ASR-Nano-2512"
 DEFAULT_FUNASR_NANO_HUB = os.environ.get("FUNASR_NANO_HUB", "ms")
 DEFAULT_FUNASR_MODEL_CACHE = os.environ.get(
     "FUNASR_MODEL_CACHE",
-    "/Users/kumaai/Documents/Codex/workspace/投资纪要工作流/03 Resources/asr-model-cache",
+    "/Users/nananaranja/Documents/Codex/asr-model-cache",
 )
 DEFAULT_FUNASR_NANO_PYTHON = os.environ.get(
     "FUNASR_NANO_PYTHON",
-    "/Users/kumaai/Documents/Codex/workspace/投资纪要工作流/03 Resources/asr-runtimes/funasr-nano-venv/bin/python",
+    "/Users/nananaranja/Documents/会议纪要整理/.transcribe-venv/bin/python",
 )
 DEFAULT_ASR_HOTWORDS = (
     "半导体,算力,AI眼镜,液冷,CPO,PCB,光模块,光芯片,东田微,依米康,"
@@ -1218,10 +1222,10 @@ def validate_post_agent_markdown(markdown: str) -> None:
     for marker in placeholder_markers:
         if marker in text:
             raise ValueError(f"Dify 整理阶段返回了错误占位内容，命中：{marker}。已拒绝创建二次校对草稿，请检查 Dify 模型节点输出。")
-    required_sections = ("## 一、逐发言人原文整理", "## 二、存疑与待确认")
+    required_sections = ("## 一、逐发言人原文整理",)
     missing = [section for section in required_sections if section not in text]
     if missing:
-        raise ValueError(f"Dify 整理阶段输出缺少固定章节：{'、'.join(missing)}，已拒绝创建二次校对草稿。")
+        raise ValueError(f"Dify 整理阶段输出缺少必需章节：{'、'.join(missing)}，已拒绝创建二次校对草稿。")
 
 
 def create_draft(payload: dict[str, Any]) -> dict[str, Any]:
@@ -1320,31 +1324,34 @@ def extract_docx_text(path: Path) -> str:
 
 def resolve_asr_model_choice(choice: str) -> dict[str, str]:
     value = str(choice or "").strip().lower()
-    if "large" in value:
-        return {"engine": "whisper", "model": "Whisper large-v3", "whisper_model": "large-v3", "sensevoice_model": "iic/SenseVoiceSmall", "aux_engine": ""}
-    if "whisper" in value:
-        return {"engine": "whisper", "model": "Whisper medium", "whisper_model": "medium", "sensevoice_model": "iic/SenseVoiceSmall", "aux_engine": ""}
     if "nano" in value:
-        return {"engine": "fun-asr-nano", "model": "Fun-ASR-Nano-2512", "whisper_model": "medium", "sensevoice_model": "iic/SenseVoiceSmall", "aux_engine": ""}
-    if "sensevoice" in value and "回退" not in str(choice or "") and "fallback" not in value and "auto" not in value:
-        return {"engine": "sensevoice", "model": "SenseVoiceSmall", "whisper_model": "medium", "sensevoice_model": "iic/SenseVoiceSmall", "aux_engine": ""}
+        return {"engine": "fun-asr-nano", "model": "Fun-ASR-Nano-2512", "sensevoice_model": "iic/SenseVoiceSmall", "aux_engine": ""}
+    if "sensevoice" in value and "auto" not in value:
+        return {"engine": "sensevoice", "model": "SenseVoiceSmall", "sensevoice_model": "iic/SenseVoiceSmall", "aux_engine": ""}
     return {
         "engine": "auto",
-        "model": "自动：SenseVoiceSmall；Fun-ASR-Nano-2512 辅助对照；失败回退 Whisper medium",
-        "whisper_model": "medium",
+        "model": "自动：SenseVoiceSmall；Nano 需显式选择；禁止降级为其他 ASR",
         "sensevoice_model": "iic/SenseVoiceSmall",
-        "aux_engine": "fun-asr-nano",
+        "aux_engine": "",
     }
 
 
 def _read_transcript_text(output_dir: Path, stem: str) -> str:
     text_path = output_dir / f"{stem}.txt"
     if not text_path.exists():
-        candidates = sorted(output_dir.glob("*.txt"), key=lambda item: item.stat().st_mtime, reverse=True)
-        text_path = candidates[0] if candidates else text_path
-    if not text_path.exists():
-        raise RuntimeError("音频转录完成但未找到转录文本")
+        raise RuntimeError(f"音频转录完成但未找到本会话输出文本: {text_path.name}")
     return text_path.read_text(encoding="utf-8", errors="replace").strip()
+
+
+def _read_transcript_json(output_dir: Path, stem: str) -> dict[str, Any]:
+    json_path = output_dir / f"{stem}.json"
+    if not json_path.exists():
+        return {}
+    try:
+        data = json.loads(json_path.read_text(encoding="utf-8", errors="replace"))
+    except json.JSONDecodeError:
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
 def _asr_diff_summary(primary_text: str, auxiliary_text: str, limit: int = 5000) -> str:
@@ -1357,10 +1364,69 @@ def _asr_diff_summary(primary_text: str, auxiliary_text: str, limit: int = 5000)
         tofile="fun-asr-nano",
         lineterm="",
     )
-    text = "\n".join(diff).strip()
-    if len(text) > limit:
-        text = text[:limit].rstrip() + "\n...（差异过长，已截断）"
+    chunks: list[str] = []
+    total = 0
+    truncated = False
+    for line in diff:
+        line_length = len(line) + 1
+        if total + line_length > limit:
+            remaining = max(limit - total, 0)
+            if remaining:
+                chunks.append(line[:remaining].rstrip())
+            truncated = True
+            break
+        chunks.append(line)
+        total += line_length
+    text = "\n".join(chunks).strip()
+    if truncated:
+        text = text.rstrip() + "\n...（差异过长，已截断）"
     return text
+
+
+def _normalize_asr_timestamp_segments(filename: str, segments: Any, limit: int = 160) -> list[dict[str, str]]:
+    if not isinstance(segments, list):
+        return []
+    normalized: list[dict[str, str]] = []
+    for item in segments:
+        if not isinstance(item, dict):
+            continue
+        text = str(item.get("text") or item.get("sentence") or "").strip()
+        if not text:
+            continue
+        start = str(item.get("start") or item.get("start_time") or item.get("begin") or "").strip()
+        end = str(item.get("end") or item.get("end_time") or item.get("finish") or "").strip()
+        speaker = str(item.get("speaker") or item.get("spk") or "").strip()
+        normalized.append(
+            {
+                "filename": filename,
+                "start": start,
+                "end": end,
+                "speaker": speaker,
+                "text": text,
+                "source": str(item.get("source") or "sensevoice").strip(),
+            }
+        )
+        if len(normalized) >= limit:
+            break
+    return normalized
+
+
+def _format_asr_timestamp_index(segments: list[dict[str, str]], limit: int = 120) -> str:
+    lines: list[str] = []
+    for item in segments[:limit]:
+        start = item.get("start", "")
+        end = item.get("end", "")
+        speaker = item.get("speaker", "")
+        text = item.get("text", "")
+        if start or end:
+            anchor = f"[{start}-{end}]"
+        else:
+            anchor = "[时间戳待定位]"
+        prefix = f"{speaker}: " if speaker else ""
+        lines.append(f"{anchor} {prefix}{text}".strip())
+    if len(segments) > limit:
+        lines.append(f"...（时间戳索引过长，已截断；共 {len(segments)} 段）")
+    return "\n".join(lines).strip()
 
 
 def transcribe_audio_payload(path: Path, output_dir: Path, *, asr_model_choice: str = "") -> dict[str, Any]:
@@ -1370,7 +1436,7 @@ def transcribe_audio_payload(path: Path, output_dir: Path, *, asr_model_choice: 
     auxiliary_dir = output_dir / "fun-asr-nano"
     primary_dir.mkdir(parents=True, exist_ok=True)
     auxiliary_dir.mkdir(parents=True, exist_ok=True)
-    primary_python = DEFAULT_FUNASR_NANO_PYTHON if model_config["engine"] == "fun-asr-nano" and Path(DEFAULT_FUNASR_NANO_PYTHON).exists() else sys.executable
+    primary_python = DEFAULT_FUNASR_NANO_PYTHON if model_config["engine"] in {"auto", "sensevoice", "fun-asr-nano"} and Path(DEFAULT_FUNASR_NANO_PYTHON).exists() else sys.executable
     command = [
         primary_python,
         str(SCRIPT_DIR / "transcribe_audio.py"),
@@ -1381,10 +1447,8 @@ def transcribe_audio_payload(path: Path, output_dir: Path, *, asr_model_choice: 
         model_config["engine"],
         "--model",
         model_config["sensevoice_model"],
-        "--whisper-model",
-        model_config["whisper_model"],
         "--output-format",
-        "txt",
+        "all" if model_config["engine"] in {"auto", "sensevoice"} else "txt",
         "--language",
         "zh" if model_config["engine"] != "fun-asr-nano" else "中文",
     ]
@@ -1402,11 +1466,20 @@ def transcribe_audio_payload(path: Path, output_dir: Path, *, asr_model_choice: 
     if completed.returncode != 0:
         raise RuntimeError((completed.stderr or completed.stdout or "音频转录失败").strip())
     primary_text = _read_transcript_text(primary_dir, path.stem)
+    primary_json = _read_transcript_json(primary_dir, path.stem)
+    speaker_segments = primary_json.get("sentence_info") if isinstance(primary_json.get("sentence_info"), list) else []
     payload: dict[str, Any] = {
         "ok": True,
         "primary_engine": model_config["engine"],
         "primary_model": model_config["model"],
         "text": primary_text,
+        "timestamp_detected": bool(primary_json.get("timestamp_detected") or speaker_segments),
+        "timestamp_segments": speaker_segments,
+        "speaker_diarization_enabled": bool(primary_json.get("speaker_diarization_enabled")),
+        "speaker_diarization_detected": bool(primary_json.get("speaker_diarization_detected")),
+        "speakers": primary_json.get("speakers") or [],
+        "speaker_segments": speaker_segments,
+        "sentence_info": speaker_segments,
         "auxiliary_engine": model_config.get("aux_engine", ""),
         "auxiliary_model": DEFAULT_FUNASR_NANO_MODEL if model_config.get("aux_engine") == "fun-asr-nano" else "",
         "auxiliary_text": "",
@@ -1518,7 +1591,15 @@ def extract_uploaded_files_text(
                 source_label = "Word 文档抽取"
             elif suffix in AUDIO_SUFFIXES:
                 report("音频转录中", before_percent, f"正在转录 {filename}，录音越长耗时越久")
-                text = transcribe_audio_file(target, transcript_dir)
+                asr_payload = transcribe_audio_payload(target, transcript_dir / target.stem)
+                text = str(asr_payload.get("text") or "").strip()
+                timestamp_segments = _normalize_asr_timestamp_segments(
+                    filename,
+                    asr_payload.get("timestamp_segments") or asr_payload.get("sentence_info") or [],
+                )
+                timestamp_index = _format_asr_timestamp_index(timestamp_segments)
+                if timestamp_index:
+                    text = f"{text}\n\n【SenseVoice 时间戳索引】\n{timestamp_index}".strip()
                 source_label = "音频转录"
             else:
                 warnings.append(f"{filename}: 暂不支持该格式，已保存原文件但未抽取文本")
@@ -1554,6 +1635,8 @@ def ingest_dify_file_list(files: list[dict[str, Any]], *, mode: str = "all", asr
     audio_sections: list[str] = []
     auxiliary_audio_sections: list[str] = []
     comparison_sections: list[str] = []
+    timestamp_index_sections: list[str] = []
+    all_timestamp_segments: list[dict[str, str]] = []
     filenames: list[str] = []
     warnings: list[str] = []
     saved_files: list[str] = []
@@ -1594,6 +1677,17 @@ def ingest_dify_file_list(files: list[dict[str, Any]], *, mode: str = "all", asr
                 if text:
                     audio_sections.append(f"### {filename}（音频/视频转录｜{model_config['model']}）\n\n{text}")
                     filenames.append(filename)
+                    timestamp_segments = _normalize_asr_timestamp_segments(
+                        filename,
+                        asr_payload.get("timestamp_segments") or asr_payload.get("sentence_info") or [],
+                    )
+                    if timestamp_segments:
+                        all_timestamp_segments.extend(timestamp_segments)
+                        timestamp_index = _format_asr_timestamp_index(timestamp_segments)
+                        if timestamp_index:
+                            timestamp_index_sections.append(f"### {filename}（SenseVoice 时间戳索引）\n\n{timestamp_index}")
+                    elif model_config["engine"] in {"auto", "sensevoice"}:
+                        warnings.append(f"{filename}: SenseVoice 未返回可用时间戳索引，音频存疑项需人工定位或使用 SenseVoice/FunASR VAD 时间锚点")
                     auxiliary_text = str(asr_payload.get("auxiliary_text") or "").strip()
                     if auxiliary_text:
                         auxiliary_audio_sections.append(
@@ -1622,7 +1716,9 @@ def ingest_dify_file_list(files: list[dict[str, Any]], *, mode: str = "all", asr
     audio_text = "\n\n".join(audio_sections).strip()
     fun_asr_nano_text = "\n\n".join(auxiliary_audio_sections).strip()
     asr_comparison_summary = "\n\n".join(comparison_sections).strip()
-    combined_parts = [part for part in [document_text, audio_text] if part]
+    sensevoice_timestamp_index = "\n\n".join(timestamp_index_sections).strip()
+    timestamp_index_text = f"【SenseVoice 时间戳索引】\n{sensevoice_timestamp_index}" if sensevoice_timestamp_index else ""
+    combined_parts = [part for part in [document_text, audio_text, timestamp_index_text] if part]
     combined_text = "\n\n".join(combined_parts).strip()
     if mode == "document":
         input_mode = "文稿抽取"
@@ -1658,6 +1754,9 @@ def ingest_dify_file_list(files: list[dict[str, Any]], *, mode: str = "all", asr
         "text_reference": document_text,
         "audio_text": audio_text,
         "sensevoice_transcript": audio_text,
+        "sensevoice_timestamp_index": sensevoice_timestamp_index,
+        "sensevoice_timestamp_segments": all_timestamp_segments,
+        "timestamp_detected": bool(all_timestamp_segments),
         "fun_asr_nano_transcript": fun_asr_nano_text,
         "auxiliary_transcripts": {"fun_asr_nano": fun_asr_nano_text} if fun_asr_nano_text else {},
         "asr_comparison_summary": asr_comparison_summary,
@@ -1811,13 +1910,20 @@ def transcribe_import_media_after_dify_asr(
     for index, path in enumerate(media_files, start=1):
         if callable(progress_callback):
             progress_callback(
-                "本地兜底转录",
+                "本地 SenseVoice/FunASR 转录",
                 68 + int(20 * (index - 1) / max(1, len(media_files))),
-                f"Dify ASR 未产出文本，正在本地兜底转录：{path.name}",
+                f"Dify ASR 未产出文本，正在本地 SenseVoice/FunASR 转录：{path.name}",
             )
-        text = transcribe_audio_file(path, transcript_dir).strip()
+        asr_payload = transcribe_audio_payload(path, transcript_dir / path.stem)
+        text = str(asr_payload.get("text") or "").strip()
         if text:
-            sections.append(f"### {path.name}（Dify ASR无文本后本地兜底转录）\n\n{text}")
+            timestamp_segments = _normalize_asr_timestamp_segments(
+                path.name,
+                asr_payload.get("timestamp_segments") or asr_payload.get("sentence_info") or [],
+            )
+            timestamp_index = _format_asr_timestamp_index(timestamp_segments)
+            timestamp_block = f"\n\n【SenseVoice 时间戳索引】\n{timestamp_index}" if timestamp_index else ""
+            sections.append(f"### {path.name}（Dify ASR无文本后本地 SenseVoice/FunASR 转录）\n\n{text}{timestamp_block}")
     return "\n\n".join(sections).strip()
 
 
@@ -1966,14 +2072,14 @@ def call_dify_workflow_for_import(
             progress_callback=progress_callback,
         )
         if not fallback_text:
-            raise RuntimeError("Dify ASR 未产出文本，本地兜底也未生成有效转录文本")
+            raise RuntimeError("Dify ASR 未产出文本，本地 SenseVoice/FunASR 也未生成有效转录文本")
         retry_inputs = dict(inputs)
         retry_inputs["transcript_text"] = "\n\n".join(
             item for item in [str(inputs.get("transcript_text") or "").strip(), fallback_text] if item
         )
         retry_inputs["correction_notes"] = (
             str(retry_inputs.get("correction_notes") or "")
-            + "\nDify ASR 已优先尝试但未产出可合并文本；已在 Dify 外部完成本地兜底转录后重跑工作流。"
+            + "\nDify ASR 已优先尝试但未产出可合并文本；已在 Dify 外部完成本地 SenseVoice/FunASR 转录后重跑工作流。"
         )
         retry_inputs.pop("asr_audio_file", None)
         document_uploads = [
@@ -1993,7 +2099,7 @@ def call_dify_workflow_for_import(
         else:
             retry_inputs.pop("meeting_files", None)
         if callable(progress_callback):
-            progress_callback("重跑 Dify 工作流", 90, "已带入本地兜底转录文本，不再让 Dify HTTP 节点长时间等待")
+            progress_callback("重跑 Dify 工作流", 90, "已带入本地 SenseVoice/FunASR 转录文本，不再让 Dify HTTP 节点长时间等待")
         return run_dify(retry_inputs, retry_user_suffix="-local-fallback")
 
     if callable(progress_callback):
