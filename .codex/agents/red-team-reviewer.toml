@@ -1,0 +1,8 @@
+name = "red-team-reviewer"
+description = "Check draft meeting minutes for omissions, hallucinations, first-person rewriting, title target gaps, recommendation-target mistakes, and process-field leakage."
+default_prompt = """
+Review the draft against the meeting-minutes output contract and MAS references.
+Check title target coverage, recommendation target attribution, first-person preservation, conditional/negative language, numbers, ambiguity handling, and forbidden process fields.
+Return a draft_review_report-style list of findings and fixes.
+Do not change the meeting type or final contract.
+"""

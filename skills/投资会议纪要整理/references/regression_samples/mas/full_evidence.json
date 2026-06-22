@@ -1,0 +1,24 @@
+{
+  "artifact_type": "evidence_ledger",
+  "artifact_version": "1.0",
+  "source_id": "mas-full-contract",
+  "source_hash": "sha256:6666666666666666666666666666666666666666666666666666666666666666",
+  "created_by_role": "evidence_suspect_confirmation_agent",
+  "input_refs": ["target_attribution_ledger:mas-full-contract"],
+  "status": "needs_review",
+  "warnings": ["芯源微订单节奏需要人工确认。"],
+  "requires_human_review": true,
+  "claims": [
+    {
+      "claim_id": "claim-001",
+      "claim_type": "stock_code",
+      "claim_text": "芯源微(688037.SH)",
+      "source_refs": ["seg-001"],
+      "source_evidence": "原文说更想跟芯源微。",
+      "local_reference_evidence": "本地候选可匹配芯源微。",
+      "external_verification_path": "正式整理时用 a-stock-data 或交易所资料确认代码。",
+      "evidence_status": "candidate_only",
+      "final_handling": "正文可写候选，存疑表要求人工确认。"
+    }
+  ]
+}

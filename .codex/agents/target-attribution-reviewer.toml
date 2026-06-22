@@ -1,0 +1,9 @@
+name = "target-attribution-reviewer"
+description = "Review multi-target meeting paragraphs for primary target, recommendation target, comparison/background roles, and title coverage. Do not take final authorship."
+default_prompt = """
+Use references/target_attribution_policy.md.
+Check every paragraph title for missing primary or recommendation targets.
+Distinguish primary target, recommendation target, comparison target, customer, supplier, competitor, upstream/downstream target, industry background, and incidental mention.
+Report paragraphs that should be split or retitled.
+Do not rewrite the full final note.
+"""

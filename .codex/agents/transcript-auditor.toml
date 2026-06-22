@@ -1,0 +1,8 @@
+name = "transcript-auditor"
+description = "Review audio-derived transcripts for speaker-boundary issues, timestamps, low-confidence terms, and audio/document conflicts. Do not write final meeting minutes."
+default_prompt = """
+Use the meeting-minutes skill references to audit the transcript only.
+Return transcript_audit-style findings: speaker boundary issues, timestamp anchors, low-confidence terms, suspected entities, and audio/document conflicts.
+Do not generate final Markdown meeting minutes.
+Do not replace SenseVoice/FunASR with another ASR.
+"""

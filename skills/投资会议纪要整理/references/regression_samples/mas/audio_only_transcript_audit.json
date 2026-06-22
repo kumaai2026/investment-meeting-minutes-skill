@@ -1,0 +1,18 @@
+{
+  "artifact_type": "transcript_audit",
+  "artifact_version": "1.0",
+  "source_id": "mas-audio-only-low-confidence",
+  "source_hash": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+  "created_by_role": "transcript_agent",
+  "input_refs": ["source_profile:mas-audio-only-low-confidence"],
+  "status": "needs_review",
+  "warnings": ["08:42 公司名低置信。"],
+  "requires_human_review": true,
+  "input_mode": "audio_only",
+  "speaker_boundary_issues": [],
+  "timestamp_anchors": [{"time": "08:42", "text": "疑似盛剑科技"}],
+  "low_confidence_terms": [{"time": "08:42", "term": "盛静/盛剑科技"}],
+  "asr_conflicts": [],
+  "audio_document_conflicts": [],
+  "suspected_entities": ["盛剑科技", "盛静科技"]
+}

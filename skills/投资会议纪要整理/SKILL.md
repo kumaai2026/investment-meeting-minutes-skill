@@ -1,6 +1,6 @@
 ---
 name: investment-meeting-minutes
-description: "Use when Codex needs to turn a Chinese investment meeting recording, transcript, or mixed audio+text input into a strict Markdown meeting note with speaker segmentation, company-name correction, stock-symbol validation, source-file archiving, and Markdown/Word export. Triggers include: 整理会议录音, 整理投资会议纪要, 把这段转录整理成纪要, 输出 Obsidian 会议纪要, 校对公司名称和股票代码, 导出 md 和 word, 结合录音与文字整理, 按发言人/板块/标的分段."
+description: "Use when Codex needs to turn a Chinese investment meeting recording, transcript, or mixed audio+text input into a strict Markdown meeting note with speaker segmentation, company-name correction, stock-symbol validation, source-file archiving, MAS-ready target attribution, and Markdown/Word export. Triggers include: 整理会议录音, 整理投资会议纪要, 把这段转录整理成纪要, 输出 Obsidian 会议纪要, 校对公司名称和股票代码, 导出 md 和 word, 结合录音与文字整理, 按发言人/板块/标的分段, 多标的标题归因, 推荐标的识别, sidecar, MAS."
 ---
 
 # Investment Meeting Minutes
@@ -8,6 +8,30 @@ description: "Use when Codex needs to turn a Chinese investment meeting recordin
 ## Overview
 
 Produce a strict, repeatable investment meeting note for Chinese-language meetings. Archive all raw input files by date, keep the original wording as much as practical, remove only meaningless filler words and meaningless repeated words, split by speaker + sector + symbol, validate company names and stock codes, and export the human-confirmed Markdown + Word into the user's Obsidian workflow. When called from Dify, treat Dify as an adapter layer: read `references/dify_adapter_guide.md` for workflow fields, review gates, and sync behavior, but keep this base skill and the selected type skill as the output-format source of truth.
+
+## Skill-first MAS positioning
+
+This skill is Skill-first, Contract-first, and MAS-ready. The base skill owns the shared workflow and quality gates; the selected type skill owns the final Markdown shape; scripts own hard validation; optional Codex subagents may review complex inputs but must not compete for final authorship.
+
+Use MAS sidecar artifacts when accuracy risk is high:
+- `audio_only` or `audio_plus_document` input
+- multi-speaker review meetings
+- one speech block mentions multiple companies, stocks, customers, suppliers, competitors, or chain links
+- the source contains recommendation, bullish/bearish view, buy/sell/add/reduce, key tracking, or watch-list language
+- the source contains company names, stock codes, customers, orders, numbers, capacity, price, revenue, profit, margin, or valuation claims
+- a previous draft showed incomplete titles, wrong recommendation target, missed terms, or first-person rewriting
+
+Keep a single-pass workflow only when the source is short, does not involve targets or high-risk claims, or the user explicitly asks for a quick draft.
+
+When MAS sidecars exist, read only the needed references:
+- `references/mas_workflow.md` for the sidecar chain and input modes
+- `references/agent_cards.md` for role boundaries
+- `references/mas_artifact_contract.md` for sidecar fields
+- `references/target_attribution_policy.md` before splitting multi-target paragraphs or writing segment titles
+- `references/evidence_policy.md` before confirming names, codes, terms, customers, numbers, orders, capacity, or prices
+- `references/sidecar_privacy_policy.md` before creating any RAG-facing sidecar
+
+Never write sidecar JSON, role names, review URLs, draft IDs, paths, tool logs, or process-only fields into the final human-readable Markdown/Word note.
 
 ## Workflow
 
@@ -58,9 +82,9 @@ python3 scripts/archive_raw_inputs.py INPUT.docx INPUT.mp3 --date 2026-04-28 --t
 ```
 
 Handle these cases:
-- Audio only: transcribe first, then organize.
-- Text/Word document only: organize directly and do not output timestamps anywhere in the final meeting note.
-- Audio + text: use the transcript as the primary source and use the text as a correction reference.
+- `audio_only`: transcribe first, then generate a `source_profile` and `transcript_audit` when the task is production-like or high risk. Low-confidence words, speaker-boundary issues, timestamps, and suspected codes must be available for later review.
+- `document_only`: skip audio transcription, generate structure/target/evidence sidecars when multi-target or high-risk claims appear, and do not output timestamps anywhere in the final meeting note body.
+- `audio_plus_document`: use both sources as evidence. The document must not automatically override audio, and audio must not automatically override the document. Put conflicts into `transcript_audit` or `suspect_confirmation` instead of forcing a merge.
 - Dify calls: read `references/dify_adapter_guide.md`. If `input_reviewed` is missing or false, do not run meeting-note formatting. Dify may pass already-extracted or transcribed text fields; do not ask for the same materials again.
 
 When audio is provided:
@@ -93,10 +117,14 @@ Read these references when needed:
 - `references/word_export_style_reference.md`
 - `references/proofreading_guide.md`
 - `references/symbol_sources.md`
+- `references/target_attribution_policy.md`
+- `references/evidence_policy.md`
 
 Correction rules:
 - Correct company names, sectors, people, and finance terminology from context.
 - Validate symbols before writing them into the final note.
+- For every paragraph, identify the primary target and all mentioned targets before writing the title. If the source contains recommendation, watch-list, buy/sell/add/reduce, bullish/bearish, or key tracking language, identify the recommendation target separately from background, comparison, customer, supplier, competitor, upstream/downstream, and incidental mentions.
+- Segment titles must cover the true primary target and recommendation target. Do not treat the first-mentioned target, most frequent target, customer, supplier, competitor, or comparison target as the recommendation target unless the source explicitly supports it.
 - For target names, stock codes, sectors, and A-share financial knowledge, call the `a-stock-data` capability when available and use its live/network data sources first. At minimum, use live quote/company-info style checks such as Tencent quote, Eastmoney stock info/news, exchange/company disclosures, or CNINFO announcements to confirm the candidate name/code is currently valid. `scripts/query_symbol_candidates.py` and local symbol CSVs are only candidate generators or fallback aids; they are not sufficient evidence by themselves when internet access is available.
 - For any doubtful content, do not rely on a single evidence path. Cross-check the source audio/transcript, the surrounding meeting context, `a-stock-data` target evidence, and professional term search before deciding whether to correct the text or keep it as ambiguous.
 - For every non-person doubtful content item, internet/professional-source search is mandatory. This applies even when local symbol lookup returns a plausible candidate. Search reliable professional sources and compare candidates against meeting context; prefer `a-stock-data` live sources, official disclosures, company websites, exchange filings, CNINFO, industry reports, regulator/association pages, and reputable financial/news sources over generic search snippets. If search evidence conflicts with the audio or context, keep the original wording, mark the doubtful fragment inline, and add a row in `## 二、存疑与待确认` explaining the competing interpretations.
@@ -136,6 +164,7 @@ When Dify invokes the Skill Agent, the meeting type selected in the import dropd
 Hard rules:
 - The selected type skill is the source of truth for output format differences. Dify may pass `meeting_type`, `custom_meeting_type`, `meeting_title`, `meeting_series`, custom meeting-series values, and input text, but Dify must not directly rewrite the output format after generation. `meeting_series` defaults to `研究所周会` when empty, and any newly added series value must be preserved as first-class metadata instead of being collapsed back to the default.
 - Every type skill must read and obey this base skill for shared rules, then apply its own output-shape overrides.
+- Type skills may use `segmentation_plan`, `target_attribution_ledger`, `evidence_ledger`, and `suspect_confirmation` sidecars as internal guidance. These artifacts must not be copied into the final note body.
 - Typed outputs include the final ambiguity section `## 二、存疑与待确认` only when real doubtful content exists.
 - When the ambiguity section exists, the table schema is always `时间戳 | 原始表述 | 当前判断 | 存疑原因 | 候选项 | 核验依据 | 人工确认`. `核验依据` must include both context judgment and search/evidence verification. Leave `人工确认` cells empty for the user.
 - `多人复盘会` keeps the current speaker + `【板块｜标的(代码)】` format.
@@ -151,6 +180,8 @@ Non-negotiable rules:
 - Do not rewrite speaker-original text in the organizer's own wording. Apart from punctuation, removing meaningless filler, correcting obvious ASR errors, and splitting topics, preserve the speaker's original wording, word order, judgment boundaries, and spoken style as much as possible. Do not polish it into research-report language.
 - Segment by actual speech order first, then by speaker, then by sector/topic, then by symbol.
 - If one speech block mentions multiple symbols, split it into multiple sub-sections.
+- If one speech block includes a primary target and a different recommendation target, either split the block or include both in the segment title. Do not omit the recommendation target.
+- Distinguish target roles before finalizing a title: primary, recommendation, comparison, customer, supplier, competitor, upstream, downstream, industry background, incidental, and uncertain.
 - Within a speaker section, start each segment with a bracket tag like `【半导体｜中芯国际(688981.SH)】`. Do not repeat the speaker name inside the segment title.
 - For uncertain words in the original-text section, keep the source wording and mark the doubtful fragment in bold markdown. When audio/video or timestamped transcript exists, immediately after each bold doubtful fragment include the inline ambiguity timestamp in the form `（存疑时间戳：HH:MM:SS）`; use ASR sentence/word timestamps first and VAD/audio-segment anchors as the fallback, and never derive timestamps by proportional alignment against the cleaned note text. When the session is text/Word/PDF-only, mark only the bold doubtful fragment and do not add any timestamp placeholder. In Word export, render these doubtful fragments as bold + underline so they are visibly marked.
 
@@ -246,6 +277,9 @@ Use to validate any generated or archived Markdown note against the current outp
 ### scripts/validate_word_export.py
 Use to validate exported Word files. It opens the `.docx`, checks the current output contract, rejects old four-section content, verifies Chinese text is present, and can compare Markdown bold ambiguity terms against Word bold+underline runs.
 
+### scripts/validate_mas_artifacts.py
+Use to validate MAS sidecar artifacts and MAS regression cases. It checks required common fields, target-attribution fields, evidence status, suspect-confirmation context, RAG-sidecar privacy keys, and final-note process-field leakage without network calls or heavy dependencies.
+
 ### scripts/run_meeting_minutes_regression.py
 Use after skill, Dify, prompt, or bridge changes to run the fixed text-only, audio-transcript-only, and audio+text regression samples under `references/regression_samples/`.
 
@@ -296,6 +330,24 @@ Read when the transcript contains ASR mistakes, company-name ambiguity, or finan
 
 ### references/symbol_sources.md
 Read when validating stock codes or refreshing local symbol resources.
+
+### references/mas_workflow.md
+Read when the source is `audio_only`, `audio_plus_document`, multi-target, or otherwise high risk. It defines the sidecar chain from `source_profile` through `export_qa`.
+
+### references/agent_cards.md
+Read when considering optional Codex subagents. It defines role boundaries and prevents agents from taking over final authorship.
+
+### references/mas_artifact_contract.md
+Read before creating or validating sidecars.
+
+### references/target_attribution_policy.md
+Read before segmenting multi-target paragraphs or writing titles that may involve recommendation, comparison, customer, supplier, competitor, or background targets.
+
+### references/evidence_policy.md
+Read before confirming company names, stock codes, terms, customers, numbers, orders, capacity, prices, revenue, profit, margin, or valuation claims.
+
+### references/sidecar_privacy_policy.md
+Read before creating sidecars intended for RAG or downstream ingestion.
 
 ## Output Contract
 

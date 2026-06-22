@@ -15,6 +15,10 @@
 - `skills/投资会议纪要整理/references/dify_adapter_guide.md`：Dify/Skill Agent 调用层说明；Dify 只负责编排、人工关口和同步，不拥有正文输出格式。
 - `skills/投资会议纪要整理/references/archive_naming_contract.md`：原始材料和终稿归档命名规范。
 - `skills/投资会议纪要整理/references/runtime_readiness_guide.md`：正式运行前依赖、模型缓存和禁止运行期下载规则。
+- `skills/投资会议纪要整理/references/mas_workflow.md`：Skill-first MAS 工作流，定义输入形态和 sidecar 交接链路。
+- `skills/投资会议纪要整理/references/target_attribution_policy.md`：多标的段落的主标的、推荐标的、比较对象、客户/供应商/竞争对手和背景提及归因规则。
+- `skills/投资会议纪要整理/references/evidence_policy.md`：公司名、代码、术语、客户名、数字、订单、产能、价格等高风险信息的证据层级。
+- `skills/投资会议纪要整理/scripts/validate_mas_artifacts.py`：轻量校验 MAS sidecar 和 MAS regression 样例，不调用网络、不引入重型依赖。
 
 ## 适用输入
 
@@ -38,6 +42,8 @@
 - 正文中的存疑词：必须加粗；只有音频/带时间戳转写来源才紧跟 `（存疑时间戳：HH:MM:SS）`，文稿-only 正文不写时间戳占位。
 - Word 导出中的存疑词：应显示为加粗 + 下划线，方便人工校对。
 
+Skill-first MAS 升级后，复杂输入会额外产生内部 sidecar，例如 `source_profile`、`transcript_audit`、`segmentation_plan`、`target_attribution_ledger`、`evidence_ledger`、`suspect_confirmation`、`draft_review_report`、`qa_report`。这些 sidecar 只用于内部审计、人工校对和回归测试，不进入最终 Markdown/Word 正文。
+
 不会在终稿中输出：
 
 - 工具日志、运行路径、输入来源、整理说明等流程字段。
@@ -53,13 +59,14 @@
 | 3. 可选辅助转写比对 | 显式需要时交叉检查公司名、术语、数字、英文缩写 | Fun-ASR-Nano-2512，仅作为辅助 | `compare_asr_models.py`、`transcribe_audio.py --engine fun-asr-nano` | 本地 Nano 运行环境和模型缓存 |
 | 4. 转写失败处理 | 本地 SenseVoice/FunASR 不可用时继续处理已有文本，不使用其他 ASR 降级转写 | 无 | 初审稿/已有转写稿 | 用户提供文本、已有转写稿 |
 | 5. 预处理 | 清理长文本、识别发言人边界、抽取候选标的 | Codex/Skill Agent 所用大模型 | `process_transcript.py` | 原始转写、人工初审稿 |
-| 6. 会议类型分发 | 按用户选择调用多人复盘、上市公司交流、专家交流或其他类型 skill | Codex/Skill Agent 所用大模型 | Dify Skill Agent、本仓库类型 skill | Dify 传入的 `meeting_type`、`meeting_series`、标题和正文 |
-| 7. 名称和代码校对 | 校正公司名、股票代码、行业术语、人物/机构名、产品名 | Codex/Skill Agent 所用大模型 | `query_symbol_candidates.py`、`a-stock-data` 能力、review bridge 的 `/target-query` | A 股/HK/US 本地证券映射、公司资料、行情/标的证据 |
-| 8. 专业证据核验 | 对不确定术语或专名做多路径确认 | Codex/Skill Agent 所用大模型 | 可用的网页/资料检索能力 | 官方公告、交易所披露、公司网站、监管/协会资料、行业报告、可靠财经新闻 |
-| 9. 人工初审 | 用户先校对转写稿、分发言人和主题，确认后才允许进入正式整理 | 无 | `meeting_minutes_review_server.py`，`stage=pre_agent` | 用户人工修订 |
-| 10. 生成纪要草稿 | 根据会议类型输出严格两段式 Markdown | Codex/Skill Agent 所用大模型 | 类型 skill、模板和格式校验脚本 | 初审后的转写稿、辅助转写、校对证据 |
-| 11. 人工二审 | 用户在富文本页面确认发言人、标的、代码、数字和存疑项 | 无 | review server，`stage=post_agent` | 用户人工修订 |
-| 12. 终稿导出和同步 | 生成 Markdown + Word，写入 Obsidian，生成后续结构化产物并同步知识库 | 无 | `export_to_obsidian.py`、`validate_word_export.py`、`sync_minutes_to_dify_dataset.py`、`sync_obsidian_to_gdrive.py` | Dify 会议纪要知识库、Google Drive 归档 |
+| 6. MAS sidecar 审计 | 对复杂输入生成输入画像、分段计划、标的归因、证据台账和存疑确认 | 可选 Codex subagents，非必需 | `validate_mas_artifacts.py`、MAS references | 当前会话材料、证据候选和人工校对意见 |
+| 7. 会议类型分发 | 按用户选择调用多人复盘、上市公司交流、专家交流或其他类型 skill | Codex/Skill Agent 所用大模型 | Dify Skill Agent、本仓库类型 skill | Dify 传入的 `meeting_type`、`meeting_series`、标题和正文 |
+| 8. 名称和代码校对 | 校正公司名、股票代码、行业术语、人物/机构名、产品名 | Codex/Skill Agent 所用大模型 | `query_symbol_candidates.py`、`a-stock-data` 能力、review bridge 的 `/target-query` | A 股/HK/US 本地证券映射、公司资料、行情/标的证据 |
+| 9. 专业证据核验 | 对不确定术语或专名做多路径确认 | Codex/Skill Agent 所用大模型 | 可用的网页/资料检索能力 | 官方公告、交易所披露、公司网站、监管/协会资料、行业报告、可靠财经新闻 |
+| 10. 人工初审 | 用户先校对转写稿、分发言人和主题，确认后才允许进入正式整理 | 无 | `meeting_minutes_review_server.py`，`stage=pre_agent` | 用户人工修订 |
+| 11. 生成纪要草稿 | 根据会议类型输出严格两段式 Markdown | Codex/Skill Agent 所用大模型 | 类型 skill、模板和格式校验脚本 | 初审后的转写稿、辅助转写、校对证据 |
+| 12. 人工二审 | 用户在富文本页面确认发言人、标的、代码、数字和存疑项 | 无 | review server，`stage=post_agent` | 用户人工修订 |
+| 13. 终稿导出和同步 | 生成 Markdown + Word，写入 Obsidian，生成后续结构化产物并同步知识库 | 无 | `export_to_obsidian.py`、`validate_word_export.py`、`sync_minutes_to_dify_dataset.py`、`sync_obsidian_to_gdrive.py` | Dify 会议纪要知识库、Google Drive 归档 |
 
 ## 转录规则
 
@@ -86,6 +93,9 @@
 通用规则：
 
 - 先按真实发言顺序，再按发言人、板块/主题、标的拆分。
+- 对多标的段落，先识别主标的、推荐标的、比较对象、客户/供应商/竞争对手、上下游标的、背景标的和顺带提及标的。
+- 标题必须覆盖真实主标的；如果存在明确推荐、看多、看空、买入、卖出、加仓、减仓或重点跟踪对象，标题或正文开头必须体现真实推荐标的。
+- 不允许因为某个标的先出现或出现次数多，就默认它是推荐对象。
 - 保留原发言人视角和人称，不把“我看好”“我们明天对接”改成第三人称总结。
 - 不把长发言压缩成 1-3 句摘要；应拆成多个可读段落。
 - 只删除无意义语气词、无意义重复和明显 ASR 噪声。
@@ -114,6 +124,13 @@
 - 对行业术语、产品名、技术路线、政策/事件词、客户名、机构/人物名、财务术语等，不只依赖 ASR。
 - 优先参考官方披露、公司网站、交易所文件、监管/协会资料、行业报告和可靠财经/新闻来源。
 - 如果音频听感、上下文和外部证据无法统一，保留原始表述，正文加粗标注，并在存疑表列出候选解释。
+
+MAS sidecar：
+
+- `target_attribution_ledger` 用于记录每段的主标的、提及标的、推荐标的和标的角色。
+- `evidence_ledger` 用于记录公司名、代码、术语、客户名、订单、数字、产能、价格等高风险 claim 的证据状态。
+- `suspect_confirmation` 用于记录不能确认的内容、上下文、候选项和建议人工确认路径。
+- Sidecar 不进入终稿正文；终稿仍保持当前 Markdown/Word contract。
 
 ## Dify adapter 边界
 
@@ -164,6 +181,7 @@ python3 skills/投资会议纪要整理/scripts/validate_utf8_text.py README.md 
 python3 skills/投资会议纪要整理/scripts/run_meeting_minutes_regression.py
 python3 skills/投资会议纪要整理/scripts/validate_meeting_minutes_contract.py NOTE.md
 python3 skills/投资会议纪要整理/scripts/validate_word_export.py NOTE.docx
+python3 skills/投资会议纪要整理/scripts/validate_mas_artifacts.py --cases skills/投资会议纪要整理/references/regression_samples/mas_cases.json --json
 python3 skills/投资会议纪要整理/scripts/transcribe_audio.py --check-model-cache
 python3 skills/投资会议纪要整理/scripts/check_investment_workflow_health.py --strict
 python3 skills/投资会议纪要整理/scripts/archive_raw_inputs.py INPUT.docx INPUT.mp3 --date 2026-06-17 --title "会议标题" --dry-run --json

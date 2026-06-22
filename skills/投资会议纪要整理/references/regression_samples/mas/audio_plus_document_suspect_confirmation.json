@@ -1,0 +1,24 @@
+{
+  "artifact_type": "suspect_confirmation",
+  "artifact_version": "1.0",
+  "source_id": "mas-audio-plus-document-conflict",
+  "source_hash": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+  "created_by_role": "evidence_suspect_confirmation_agent",
+  "input_refs": ["transcript_audit:mas-audio-plus-document-conflict"],
+  "status": "needs_review",
+  "warnings": [],
+  "requires_human_review": true,
+  "items": [
+    {
+      "item_id": "suspect-001",
+      "source_refs": ["12:10"],
+      "original_expression": "音频说十五万，文稿写十六万",
+      "current_judgment": "价格数字冲突，不直接强行合并",
+      "uncertainty_reason": "音频和文稿数值不一致。",
+      "candidate_values": ["15万元/吨", "16万元/吨"],
+      "context": "同段讨论铜箔报价和涨价传导。",
+      "suggested_confirmation_path": "回听 12:10 附近音频，并核对原始文稿来源。",
+      "final_note_handling": "正文保留冲突说明，存疑表列出两个候选。"
+    }
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "artifact_type": "target_attribution_ledger",
+  "artifact_version": "1.0",
+  "source_id": "mas-full-contract",
+  "source_hash": "sha256:6666666666666666666666666666666666666666666666666666666666666666",
+  "created_by_role": "target_attribution_agent",
+  "input_refs": ["segmentation_plan:mas-full-contract"],
+  "status": "confirmed",
+  "warnings": [],
+  "requires_human_review": false,
+  "segments": [
+    {
+      "segment_id": "seg-001",
+      "primary_target": "华海清科(688120.SH)",
+      "mentioned_targets": ["华海清科(688120.SH)", "芯源微(688037.SH)"],
+      "recommendation_target": "芯源微(688037.SH)",
+      "target_roles": {
+        "华海清科(688120.SH)": ["primary", "comparison"],
+        "芯源微(688037.SH)": ["recommendation"]
+      },
+      "title_requirement": "标题必须体现芯源微，同时保留华海清科是主讨论背景。",
+      "attribution_confidence": "medium",
+      "attribution_notes": "需要人工确认是否拆段。"
+    }
+  ]
+}

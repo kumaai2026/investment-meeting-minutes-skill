@@ -1,0 +1,26 @@
+{
+  "artifact_type": "target_attribution_ledger",
+  "artifact_version": "1.0",
+  "source_id": "mas-document-second-target",
+  "source_hash": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+  "created_by_role": "target_attribution_agent",
+  "input_refs": ["source_profile:mas-document-second-target"],
+  "status": "confirmed",
+  "warnings": [],
+  "requires_human_review": false,
+  "segments": [
+    {
+      "segment_id": "seg-001",
+      "primary_target": "新易盛(300502.SZ)",
+      "mentioned_targets": ["中际旭创(300308.SZ)", "新易盛(300502.SZ)"],
+      "recommendation_target": "新易盛(300502.SZ)",
+      "target_roles": {
+        "中际旭创(300308.SZ)": ["comparison", "industry_background"],
+        "新易盛(300502.SZ)": ["primary", "recommendation"]
+      },
+      "title_requirement": "标题必须写新易盛；中际旭创是比较对象。",
+      "attribution_confidence": "high",
+      "attribution_notes": "真实推荐标的是新易盛，不能只因中际旭创先出现就写中际旭创。"
+    }
+  ]
+}
