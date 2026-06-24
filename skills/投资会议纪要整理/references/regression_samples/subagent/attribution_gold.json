@@ -1,0 +1,17 @@
+{
+  "cases": [
+    {"case_id": "c01", "primary_target_ids": ["b"], "recommendation_target_ids": ["b"], "heading_target_ids": ["a", "b"], "roles": {"a": ["industry_background"], "b": ["primary_target", "recommendation_target"]}, "actions": {"b": "recommend"}},
+    {"case_id": "c02", "primary_target_ids": ["b"], "recommendation_target_ids": ["b"], "heading_target_ids": ["b"], "roles": {"a": ["comparison_target"], "b": ["primary_target", "recommendation_target"]}, "actions": {"b": "recommend"}},
+    {"case_id": "c03", "primary_target_ids": ["c"], "recommendation_target_ids": [], "heading_target_ids": ["c"], "roles": {"cust": ["customer"], "c": ["primary_target"]}, "actions": {"c": "positive"}},
+    {"case_id": "c04", "primary_target_ids": ["d"], "recommendation_target_ids": [], "heading_target_ids": ["d"], "roles": {"sup": ["supplier"], "d": ["primary_target"]}, "actions": {"d": "positive"}},
+    {"case_id": "c05", "primary_target_ids": ["e", "f"], "recommendation_target_ids": ["e", "f"], "heading_target_ids": ["e", "f"], "roles": {"e": ["primary_target", "recommendation_target"], "f": ["primary_target", "recommendation_target"]}, "actions": {"e": "recommend", "f": "recommend"}},
+    {"case_id": "c06", "primary_target_ids": ["g", "h"], "recommendation_target_ids": [], "heading_target_ids": ["g"], "roles": {"g": ["primary_target"], "h": ["primary_target"]}, "actions": {"g": "hold", "h": "reduce"}},
+    {"case_id": "c07", "primary_target_ids": ["i"], "recommendation_target_ids": [], "heading_target_ids": ["i"], "roles": {"i": ["primary_target"]}, "actions": {"i": "positive"}},
+    {"case_id": "c08", "primary_target_ids": ["j"], "recommendation_target_ids": [], "heading_target_ids": ["j"], "roles": {"j": ["primary_target"]}, "actions": {"j": "watch"}},
+    {"case_id": "c09", "primary_target_ids": ["k"], "recommendation_target_ids": [], "heading_target_ids": ["k"], "roles": {"k": ["primary_target"]}, "actions": {"k": "avoid"}},
+    {"case_id": "c10", "primary_target_ids": ["l"], "recommendation_target_ids": [], "heading_target_ids": ["l", "m"], "roles": {"l": ["primary_target"], "m": ["incidental"]}, "actions": {"l": "positive"}},
+    {"case_id": "c11", "primary_target_ids": [], "recommendation_target_ids": [], "heading_target_ids": ["n"], "roles": {"n": ["unclear"]}, "actions": {"n": "unclear"}},
+    {"case_id": "c12", "primary_target_ids": ["o"], "recommendation_target_ids": [], "heading_target_ids": ["o"], "roles": {"o": ["primary_target"]}, "actions": {"o": "watch"}},
+    {"case_id": "c13", "primary_target_ids": ["p"], "recommendation_target_ids": ["q"], "heading_target_ids": ["p", "q"], "roles": {"p": ["primary_target"], "q": ["recommendation_target"]}, "actions": {"p": "positive", "q": "recommend"}}
+  ]
+}

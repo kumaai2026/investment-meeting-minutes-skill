@@ -1,0 +1,17 @@
+{
+  "cases": [
+    {
+      "case_id": "c02",
+      "primary_target_ids": ["b"],
+      "recommendation_target_ids": ["b"],
+      "heading_target_ids": ["b"],
+      "roles": {
+        "a": ["comparison_target"],
+        "b": ["primary_target", "recommendation_target"]
+      },
+      "actions": {
+        "b": "recommend"
+      }
+    }
+  ]
+}
