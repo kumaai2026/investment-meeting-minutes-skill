@@ -1,103 +1,124 @@
-# 标的归因规则
+# Target Attribution Policy
 
-本文件是 Skill-first MAS 升级的重点，用于避免多标的段落标题不全、推荐标的误判和背景标的污染。
+This policy defines target roles, investment actions, recommendation signals, and heading coverage for the conditional Subagent workflow. Semantic attribution comes from the Content Integrity Reviewer or human gold labels; deterministic scripts only check consistency against `analysis_ledger.json`.
 
-## 基本定义
+## Core Rules
 
-每个正文段落必须识别：
-- `primary_target`: 段落主要讨论对象。
-- `mentioned_targets`: 段落中出现的所有公司、股票、指数、客户、供应商、竞争对手或产业链对象。
-- `recommendation_target`: 说话人实际推荐、看多、看空、建议关注、重点跟踪、买入、卖出、加仓、减仓的对象；没有明确投资动作时可为空。
-- `target_roles`: 每个 mentioned target 在段落中的角色。
+- The first-mentioned or most frequently mentioned target is not automatically the primary target or recommendation target.
+- Customers, suppliers, competitors, comparable companies, upstream/downstream entities, and background objects must not be promoted into recommendation targets without explicit source evidence.
+- Negative actions are not recommendations, but their action object must still be recorded correctly.
+- If the main discussion object and the action object differ, split the segment or include both in the heading.
+- Main Orchestrator decides final segmentation and headings. Reviewers only return findings.
 
-## 角色分类
+## Roles
 
-必须区分：
-- 主标的：段落主要分析对象。
-- 推荐标的：发言人实际给出投资动作或重点关注的对象。
-- 被比较标的：用于估值、空间、弹性、业务或股价表现比较的对象。
-- 客户：收入、订单、验证、供货、需求来源。
-- 供应商：上游供给、材料、设备、零部件来源。
-- 竞争对手：同业格局或替代关系。
-- 上游/下游相关方：产业链关系存在，但不是投资推荐对象。
-- 行业背景标的：用于说明行业或主题，不是本段核心。
-- 顺带提及标的：短暂出现，不承载本段投资判断。
-- 存疑标的：无法稳定判断角色或实体。
+Allowed roles are:
 
-## 标题规则
+- `primary_target`
+- `recommendation_target`
+- `comparison_target`
+- `customer`
+- `supplier`
+- `competitor`
+- `upstream`
+- `downstream`
+- `industry_background`
+- `incidental`
+- `unclear`
 
-- 标题必须优先覆盖 `primary_target`。
-- 如果存在 `recommendation_target`，标题必须覆盖推荐标的。
-- 当 `primary_target` 和 `recommendation_target` 不一致时，标题应同时覆盖二者，或拆段。
-- 一段话涉及多个标的且无法确定主次时，标题应体现多标的或标记存疑。
-- 上市公司交流的公司级标的仍放在标题和元信息中；正文小段标题用业务主题，但不得丢失问答中的真实推荐或比较对象。
+## Explicit Recommendation
 
-## 禁止误判
+Recommendation means an explicit positive investment action, not merely a positive view.
 
-- 不允许因为某个公司出现次数多，就默认它是推荐标的。
-- 不允许把客户、供应商、竞争对手、指数、行业背景标的误判成推荐对象。
-- 不允许把“对标”“类似”“受益于某客户”“给某客户供货”直接改写为推荐该客户。
-- 不允许遗漏段落中的核心推荐对象。
-- 不允许为了标题简短只保留第一个出现的标的。
+Strong recommendation signals may set:
 
-## 推荐信号
+```json
+{
+  "roles": ["recommendation_target"],
+  "action": "recommend",
+  "explicit_recommendation": true
+}
+```
 
-以下表达通常触发 `recommendation_target`：
-- `我看好`
-- `重点看`
-- `继续跟`
-- `建议关注`
-- `可以买`
-- `准备买`
-- `加仓`
-- `减仓`
-- `持有`
-- `非卖品`
-- `弹性最大`
-- `空间最大`
-- `优先推荐`
-- `先看多少市值`
-- `短期催化`
-- `赔率好`
+Strong signals include:
 
-看空、规避、卖出、减仓也必须标为 recommendation 行为，但方向写入备注。
+- 推荐
+- 重点推荐
+- 核心推荐
+- 首选
+- 第一选择
+- 可以买
+- 建议买入
+- 准备买
+- 准备加仓
 
-## 比较和背景信号
+## Weak Positive Or Tracking Language
 
-以下表达通常不是推荐信号：
-- `对标`
-- `类似`
-- `不如`
-- `比某某更`
-- `客户是`
-- `供应给`
-- `产业链上游`
-- `下游客户`
-- `竞争对手`
-- `带动`
-- `映射`
-- `背景是`
-- `主题里还有`
+Weak expressions must not automatically become recommendation targets:
 
-如果比较对象同时出现明确投资动作，再按推荐信号处理。
+- 建议关注
+- 重点跟踪
+- 弹性最大
+- 空间较大
+- 赔率不错
+- 位置不错
+- 值得重视
+- 可以看看
+- 有机会
+- 短期催化
 
-## 拆段规则
+Depending on context, set:
 
-必须拆段：
-- 一个语义块中存在两个以上独立投资判断。
-- 主标的和推荐标的不一致且标题无法清晰覆盖。
-- 客户/供应商/竞争对手信息过多，容易被误读为推荐对象。
-- 一段话先比较 A，再推荐 B，且 B 是核心观点。
+- `action=positive`
+- `action=watch`
+- `action=trade_opportunity`
 
-可以不拆段但标题需覆盖：
-- 同一投资判断下同时出现主标的和推荐标的。
-- 多个标的是同一组合或同一交易线索。
-- 多个标的只是并列跟踪对象，且没有独立长逻辑。
+and set:
 
-## 存疑处理
+```json
+{
+  "explicit_recommendation": false
+}
+```
 
-如果无法判断主次或推荐对象：
-- 保留原文。
-- `target_attribution_ledger` 中 `attribution_confidence` 写低置信。
-- 进入 `suspect_confirmation`。
-- 终稿标题可写多标的或 `待确认`，并在存疑表提供上下文和确认路径。
+## Action Mapping
+
+- “没有减仓”“继续拿着”: `action=hold`
+- “减仓”: `action=reduce`
+- “不建议追”“先回避”: `action=avoid`
+- “看空”: `action=negative`
+- Pure factual background: `action=neutral`
+- Unclear source: `action=unclear`
+
+## Heading Rules
+
+- `primary_target_ids` should normally be included in `heading_target_ids`.
+- `recommendation_target_ids` must be included in `heading_target_ids` unless `heading_exception_reason` is explicit and reviewable.
+- A recommendation target should appear in the corresponding final heading.
+- A customer, supplier, or comparison target must not be the only target in a heading when a recommendation target exists.
+- `ticker_status` values other than `confirmed` must not appear as an unmarked confirmed code in the final heading.
+
+## Split Rules
+
+Split is required when:
+
+- One semantic block contains two or more independent investment actions.
+- Primary target and recommendation target differ and the heading cannot clearly cover both.
+- Customer/supplier/competitor information is long enough to be mistaken for an investment target.
+- The source first compares A, then explicitly recommends B.
+
+Split may be skipped when:
+
+- Multiple targets share one action and one logic chain.
+- Targets are a basket or pair trade and the heading covers the basket.
+- The source only lists tracking candidates without explicit action.
+
+## Uncertainty
+
+If attribution remains unclear:
+
+- Keep source wording.
+- Mark the target or action confidence as low.
+- Add `unresolved_items`.
+- Set top-level `requires_human_review=true`.
+- Do not silently convert ambiguity into a confirmed title.

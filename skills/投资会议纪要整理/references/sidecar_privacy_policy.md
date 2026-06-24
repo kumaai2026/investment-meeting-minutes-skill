@@ -1,65 +1,60 @@
-# Sidecar 隐私规则
+# Internal Artifact Privacy Policy
 
-本文件定义 MAS sidecar 的隐私边界。
+Only two internal artifacts are authoritative:
 
-## sidecar 类型
+- `analysis_ledger.json`
+- `qa_report.json`
 
-### internal_sidecar
+They are internal review artifacts, not final notes and not RAG documents.
 
-用途：
-- 调试
-- 人工校对
-- 红队复核
-- 回归测试
+## Storage
 
-可以包含：
-- source refs
-- source span 摘要
-- 本地文件名或相对引用
-- 低置信词
-- 证据路径摘要
-- 未确认客户名或术语候选
+Internal artifacts should live under:
 
-限制：
-- 不写入最终 Markdown/Word。
-- 不同步到公开知识库。
-- 不作为 RAG 入库文本直接使用。
+```text
+.meeting-minutes-internal/
+```
 
-### rag_sidecar
+They must not be written into:
 
-用途：
-- 下游 RAG 入库
-- 检索增强
-- 非发言人导向的知识整理
+- Formal Markdown or Word output directories.
+- Dify knowledge-base sync payloads.
+- Google Drive sync output.
+- Sanitizer RAG outputs.
+- Public examples containing real meeting material.
 
-必须脱敏：
-- 不包含真实发言人姓名、身份、机构、个人风格。
-- 不包含内部绝对路径。
-- 不包含 review URL、draft ID、history URL、token、cookie、API key。
-- 不包含未脱敏客户名，除非客户名已经在最终确认纪要中允许公开。
-- 不包含逐字 source span 或原始音频片段路径。
+## Git And Sync Excludes
 
-## forbidden keys
+Repositories and sync scripts should exclude:
 
-`rag_sidecar` 中禁止出现：
-- `speaker_name`
-- `speaker_identity`
-- `speaker_affiliation`
-- `speaker_style`
-- `raw_source_path`
-- `absolute_path`
-- `review_url`
-- `draft_id`
-- `history_url`
+```text
+**/.meeting-minutes-internal/**
+**/*_analysis_ledger.json
+**/*_qa_report.json
+```
+
+Do not change unrelated sync behavior only to support this policy.
+
+## Forbidden Keys And Values
+
+Validators must inspect both keys and recursive string values. Internal artifacts and public fixtures must not contain:
+
+- `/Users/`
+- `C:\`
+- `file://`
+- review URLs
+- draft ID URLs
+- `token=`
 - `api_key`
-- `token`
+- `Authorization`
+- `Bearer`
 - `cookie`
-- `source_span`
-- `raw_transcript`
-- `internal_notes`
+- localhost review endpoints
 
-## 终稿隔离
+Use placeholders such as `<repo-root>`, `<workflow-root>`, `<redacted-note.md>`, and `<redacted-note.docx>` in reusable reports and fixtures.
 
-最终 Markdown/Word 既不是 internal_sidecar，也不是 rag_sidecar。终稿只能保留读者需要的会议内容、元信息、近原文整理和存疑表。
+## Final Note Isolation
 
-如果需要 RAG 入库，应在人工确认后使用脱敏或结构化后处理脚本生成独立产物。
+Final Markdown/Word may contain only reader-facing meeting content, metadata, corrected near-original text, and the ambiguity table when real uncertainty exists.
+
+Final notes must not contain `analysis_ledger`, `qa_report`, JSON field names, tool logs, local paths, review URLs, draft IDs, or internal reviewer status.

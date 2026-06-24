@@ -1,6 +1,6 @@
 # 证据规则
 
-本文件定义信息核验的证据层级和边界。
+本文件定义信息核验的证据层级和边界。证据结论写入 `analysis_ledger.json` 的 `high_risk_claims`，不再拆成多个旧 sidecar。
 
 ## 证据层级
 
@@ -30,7 +30,8 @@
 地位：
 - 只用于候选纠错和缩小检索范围。
 - 本地候选不是最终确认。
-- 置信不足、候选冲突或资源过期时必须进入 `suspect_confirmation` 或继续外部核验。
+- 只有本地候选、外部尚未确认时，不得标记 `confirmed`。
+- 置信不足、候选冲突或资源过期时必须写入 `unresolved_items` 或继续外部核验。
 
 ### external_verification_path
 
@@ -51,13 +52,28 @@
 
 ## 高风险 claim
 
-以下信息必须进入 `evidence_ledger`：
+以下信息必须进入 `high_risk_claims`：
 - 公司名和股票代码
 - 客户名、供应商名、竞争对手名
 - 订单、产能、价格、收入、利润、毛利率、估值、市值
 - 时间节点、政策事件、公告事件
 - 产品型号、技术路线、专业术语
 - 投资动作：买入、卖出、加仓、减仓、重点跟踪
+
+每个 high-risk claim 至少包含：
+
+```json
+{
+  "claim_id": "",
+  "claim_type": "",
+  "claim_text": "",
+  "source_ref": "",
+  "source_evidence": "",
+  "external_verification_path": "",
+  "evidence_status": "",
+  "final_handling": ""
+}
+```
 
 ## evidence_status
 
@@ -67,6 +83,8 @@
 - `unverified`: 尚未核验。
 - `not_found`: 已检索但未找到可靠证据。
 - `not_applicable`: 该 claim 不需要外部确认，例如发言人个人观点。
+
+`candidate_only` / `unverified` / `not_found` 的 ticker 不得作为已确认代码写入最终标题。若正文必须保留候选代码，必须在正文和存疑表中明确标注。
 
 ## 存疑表要求
 
