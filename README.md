@@ -2,211 +2,106 @@
 
 这个仓库保存 Codex 使用的中文投资会议纪要整理 skill 包，用于把投资研究场景中的会议录音、转写稿、纪要草稿或音频+文字混合材料，整理成可人工复核、可归档、可同步知识库的 Markdown 和 Word 会议纪要。
 
-它的核心目标不是生成压缩摘要，而是保留接近原始发言的信息密度：按真实发言顺序整理，去除无意义口水词和明显 ASR 噪声，校正公司名、股票代码、行业术语、数字和专有名词；只有存在不能确认的内容时，才生成存疑表。
+当前定位是 **Skill-first + conditional Subagents**。它不是完整 MAS，也不引入 LangGraph、CrewAI、AutoGen 等重型 Agent 框架。
+
+## 核心原则
+
+- Main Orchestrator 是最终 Markdown、Word、归档和同步产物的唯一写作者。
+- Subagents 只读审查并返回结构化 findings，不直接修改终稿。
+- 会议类型 skill 仍是最终输出格式权威。
+- Deterministic validators 决定硬性 GO/NO-GO。
+- Dify 仍是上传、抽取/转写、人工关口、归档确认和同步 adapter。
+- Dify subagent execution is unverified; existing single-agent fallback remains authoritative.
 
 ## Skill 包内容
 
-- `skills/投资会议纪要整理`：基础 skill，定义归档、转录、预处理、校对、格式、复核、导出、同步和验证规则。
+- `skills/投资会议纪要整理`：基础 skill，定义归档、转录、预处理、Subagent 触发、校对、格式、复核、导出、同步和验证规则。
 - `skills/投资会议纪要-多人复盘会`：用于多名发言人轮流复盘市场、板块、标的和仓位动作。
 - `skills/投资会议纪要-上市公司交流`：用于上市公司管理层交流、业绩会和调研纪要。
 - `skills/投资会议纪要-专家交流`：用于专家电话会、产业链访谈、渠道调研和主题深访。
 - `skills/投资会议纪要-其他`：用于不属于以上三类的自定义中文投研会议。
-- `skills/meeting-minutes-sanitizer`：用于中文投研会议纪要脱敏，删除发言人身份和发言风格，输出 `<原文件名>_sanitized.docx` 与 `<原文件名>_rag.jsonl`。
-- `skills/投资会议纪要整理/references/dify_adapter_guide.md`：Dify/Skill Agent 调用层说明；Dify 只负责编排、人工关口和同步，不拥有正文输出格式。
-- `skills/投资会议纪要整理/references/archive_naming_contract.md`：原始材料和终稿归档命名规范。
-- `skills/投资会议纪要整理/references/runtime_readiness_guide.md`：正式运行前依赖、模型缓存和禁止运行期下载规则。
-- `skills/投资会议纪要整理/references/mas_workflow.md`：Skill-first MAS 工作流，定义输入形态和 sidecar 交接链路。
-- `skills/投资会议纪要整理/references/target_attribution_policy.md`：多标的段落的主标的、推荐标的、比较对象、客户/供应商/竞争对手和背景提及归因规则。
-- `skills/投资会议纪要整理/references/evidence_policy.md`：公司名、代码、术语、客户名、数字、订单、产能、价格等高风险信息的证据层级。
-- `skills/投资会议纪要整理/scripts/validate_mas_artifacts.py`：轻量校验 MAS sidecar 和 MAS regression 样例，不调用网络、不引入重型依赖。
+- `skills/meeting-minutes-sanitizer`：用于中文投研会议纪要脱敏。
+- `.codex/agents/transcript-auditor.toml`：只读 Transcript Auditor。
+- `.codex/agents/content-integrity-reviewer.toml`：只读 Content Integrity Reviewer，支持 `pre_draft` 和 `post_draft`。
+- `.codex/config.toml`：限制 custom agent 并发和派生深度。
 
-## 适用输入
+## Conditional Subagents
 
-支持以下输入形态：
+### Transcript Auditor
 
-- 音频：如 `mp3`、`m4a`、`wav` 等会议录音。
-- 文稿：如 `txt`、`md`、`docx`、Dify 文本抽取结果或人工转写稿。
-- 音频+文稿：以音频转写为主，文稿作为校正参考。
-- Dify 工作流字段：`combined_text`、`text_reference`、`sensevoice_transcript`、`meeting_title`、`meeting_type`、`meeting_series`、`input_reviewed` 等。
-- 用户补充信息：会议日期、会议标题、会议类型、会议系列、发言人名单、标的提示、需要重点校对的术语或代码。
+用于 `audio_only`、存在音频/文稿冲突的 `audio_plus_document`、发言人边界不清、关键实体/代码/数字/术语低置信、或需要可靠时间锚点的场景。
 
-## 预期输出
+输出只进入内部 `analysis_ledger.json`，不得写终稿。
 
-最终纪要默认输出为 Markdown + Word，不生成 PDF。
+### Content Integrity Reviewer
 
-终稿必须包含：
+`pre_draft` 负责主标的、推荐标的、客户/供应商/竞争对手/比较对象、高风险事实、拆段和标题建议。
 
-- 读者可见的元信息：`会议日期`、`整理时间`、`会议标题`、`会议类型`、`会议系列`，上市公司交流还应包含 `会议标的`。
-- `## 一、逐发言人原文整理`：按真实发言顺序整理后的近原文内容。
-- `## 二、存疑与待确认`：只有存在真实存疑内容时输出；表头统一为 `时间戳 | 原始表述 | 当前判断 | 存疑原因 | 候选项 | 核验依据 | 人工确认`，文稿-only 或无法定位时间锚点时 `时间戳` 写 `未提供`。
-- 正文中的存疑词：必须加粗；只有音频/带时间戳转写来源才紧跟 `（存疑时间戳：HH:MM:SS）`，文稿-only 正文不写时间戳占位。
-- Word 导出中的存疑词：应显示为加粗 + 下划线，方便人工校对。
+`post_draft` 负责对照原材料、analysis ledger 和草稿，检查标题覆盖、推荐标的误判、动作/立场漂移、第一人称/否定/条件表达、数字单位、存疑标注、会议类型 contract 和过程字段污染。
 
-Skill-first MAS 升级后，复杂输入会额外产生内部 sidecar，例如 `source_profile`、`transcript_audit`、`segmentation_plan`、`target_attribution_ledger`、`evidence_ledger`、`suspect_confirmation`、`draft_review_report`、`qa_report`。这些 sidecar 只用于内部审计、人工校对和回归测试，不进入最终 Markdown/Word 正文。
+正式会议纪要默认运行 post-draft review；纯格式转换或明确要求快速非正式草稿时可跳过。
 
-不会在终稿中输出：
+## 输入模式
 
-- 工具日志、运行路径、输入来源、整理说明等流程字段。
-- 未经人工确认的初始转写稿或模型草稿。
-- 旧版四段式内容，如 `AI结构化总结`、`标的汇总表` 等。
+- `audio_only`：原始材料 -> ASR -> 条件式 Transcript Auditor -> 人工初审 -> pre_draft Reviewer -> Main Orchestrator 写草稿 -> post_draft Reviewer -> 脚本校验 -> 人工二审 -> 导出。
+- `audio_plus_document`：同上，但音频和文稿互为证据；未经确认的 ASR 不得在人工初审前作为高置信标的归因输入。
+- `document_only`：文稿 -> 输入确认/人工初审 -> pre_draft Reviewer -> Main Orchestrator 写草稿 -> post_draft Reviewer -> 脚本校验 -> 人工二审 -> 导出。
 
-## 处理流程
+## Internal Artifacts
 
-| 步骤 | 做什么 | 使用的大模型/服务 | MCP/本地工具 | 外部数据和证据 |
-| --- | --- | --- | --- | --- |
-| 1. 原始材料归档 | 先复制所有原始音频、文稿、附件，不移动用户原文件 | 无 | `archive_raw_inputs.py`、Dify `/archive-inputs` 桥接服务 | 本地 Obsidian 工作流目录、Google Drive 同步目标 |
-| 2. 音频转写 | 将录音转成可复核文本，优先纯 SenseVoice | SenseVoice `iic/SenseVoiceSmall` | `transcribe_audio.py`、`sensevoice_transcription_server.py` | 本地 FunASR/ModelScope 模型缓存 |
-| 3. 可选辅助转写比对 | 显式需要时交叉检查公司名、术语、数字、英文缩写 | Fun-ASR-Nano-2512，仅作为辅助 | `compare_asr_models.py`、`transcribe_audio.py --engine fun-asr-nano` | 本地 Nano 运行环境和模型缓存 |
-| 4. 转写失败处理 | 本地 SenseVoice/FunASR 不可用时继续处理已有文本，不使用其他 ASR 降级转写 | 无 | 初审稿/已有转写稿 | 用户提供文本、已有转写稿 |
-| 5. 预处理 | 清理长文本、识别发言人边界、抽取候选标的 | Codex/Skill Agent 所用大模型 | `process_transcript.py` | 原始转写、人工初审稿 |
-| 6. MAS sidecar 审计 | 对复杂输入生成输入画像、分段计划、标的归因、证据台账和存疑确认 | 可选 Codex subagents，非必需 | `validate_mas_artifacts.py`、MAS references | 当前会话材料、证据候选和人工校对意见 |
-| 7. 会议类型分发 | 按用户选择调用多人复盘、上市公司交流、专家交流或其他类型 skill | Codex/Skill Agent 所用大模型 | Dify Skill Agent、本仓库类型 skill | Dify 传入的 `meeting_type`、`meeting_series`、标题和正文 |
-| 8. 名称和代码校对 | 校正公司名、股票代码、行业术语、人物/机构名、产品名 | Codex/Skill Agent 所用大模型 | `query_symbol_candidates.py`、`a-stock-data` 能力、review bridge 的 `/target-query` | A 股/HK/US 本地证券映射、公司资料、行情/标的证据 |
-| 9. 专业证据核验 | 对不确定术语或专名做多路径确认 | Codex/Skill Agent 所用大模型 | 可用的网页/资料检索能力 | 官方公告、交易所披露、公司网站、监管/协会资料、行业报告、可靠财经新闻 |
-| 10. 人工初审 | 用户先校对转写稿、分发言人和主题，确认后才允许进入正式整理 | 无 | `meeting_minutes_review_server.py`，`stage=pre_agent` | 用户人工修订 |
-| 11. 生成纪要草稿 | 根据会议类型输出严格两段式 Markdown | Codex/Skill Agent 所用大模型 | 类型 skill、模板和格式校验脚本 | 初审后的转写稿、辅助转写、校对证据 |
-| 12. 人工二审 | 用户在富文本页面确认发言人、标的、代码、数字和存疑项 | 无 | review server，`stage=post_agent` | 用户人工修订 |
-| 13. 终稿导出和同步 | 生成 Markdown + Word，写入 Obsidian，生成后续结构化产物并同步知识库 | 无 | `export_to_obsidian.py`、`validate_word_export.py`、`sync_minutes_to_dify_dataset.py`、`sync_obsidian_to_gdrive.py` | Dify 会议纪要知识库、Google Drive 归档 |
+旧的多 sidecar 链路已收敛为两个内部产物：
 
-## 转录规则
+- `analysis_ledger.json`
+- `qa_report.json`
 
-- 默认入口是 `scripts/transcribe_audio.py`。
-- `--engine auto` 只使用 SenseVoice/FunASR；本地不可用时直接报错，不得降级到其他 ASR。
-- SenseVoice 默认模型为 `iic/SenseVoiceSmall`，默认语言为 `zh`。
-- 默认使用纯 SenseVoice 作为主转写和存疑时间戳来源，不启用 cam++ 或 VAD。
-- `--output-format json|all` 会额外生成带时间锚点的 JSON；优先使用 SenseVoice 直接时间戳。
-- cam++ 说话人分离和 `fsmn-vad` 暂不进入默认维护链路。
-- 辅助模型保留为显式选项 `FunAudioLLM/Fun-ASR-Nano-2512`，用于对照校正公司名、金融术语、数字和英文缩写，不自动覆盖主转写。
-- 不支持为字幕格式降级调用其他 ASR；需要时间锚点时使用 SenseVoice/FunASR 的 `json` 或 `all` 输出。
-- 本仓库不打包模型权重或虚拟环境；部署环境应通过 `FUNASR_MODEL_CACHE`、`FUNASR_NANO_PYTHON` 等变量指向本地缓存和运行时。
-- macOS 本地 Dify 转写桥可用 `scripts/start_sensevoice_transcription_server.sh` 启动；对应 LaunchAgent 模板在 `skills/投资会议纪要整理/launchagents/com.kumaai.sensevoice-transcription-server.plist`，会固定本地模型缓存和虚拟环境，避免每次整理会议纪要时重新下载模型。
-
-运行期硬规则：
-
-- 正式整理会议时不得自动下载模型或安装 Python 依赖。
-- 缺少 SenseVoice/FunASR 依赖或本地模型缓存时，音频转写步骤必须失败并报告缺失项。
-- 可以继续处理用户已经提供的文本或人工转写稿，但不能假装音频已经完成转写。
-- 不允许因为 SenseVoice/FunASR 不可用而自动切换到 Whisper 或其他 ASR。
-
-## 整理和输出规则
-
-通用规则：
-
-- 先按真实发言顺序，再按发言人、板块/主题、标的拆分。
-- 对多标的段落，先识别主标的、推荐标的、比较对象、客户/供应商/竞争对手、上下游标的、背景标的和顺带提及标的。
-- 标题必须覆盖真实主标的；如果存在明确推荐、看多、看空、买入、卖出、加仓、减仓或重点跟踪对象，标题或正文开头必须体现真实推荐标的。
-- 不允许因为某个标的先出现或出现次数多，就默认它是推荐对象。
-- 保留原发言人视角和人称，不把“我看好”“我们明天对接”改成第三人称总结。
-- 不把长发言压缩成 1-3 句摘要；应拆成多个可读段落。
-- 只删除无意义语气词、无意义重复和明显 ASR 噪声。
-- 不编造催化、业绩数字、股票代码、客户名或结论。
-- 所有存疑内容必须正文内联标注，并进入最终存疑表。
-- 每条真实存疑必须先结合上下文和搜索/证据核验；`核验依据` 必须同时写明 `上下文：...` 和 `检索/证据：...`，不能只写“待确认”。
-
-不同会议类型的输出差异：
-
-- 多人复盘会：保持发言人切换和真实顺序，段落标题使用 `【板块｜标的(代码)】`。
-- 上市公司交流：标题和元信息承载 `板块｜标的(代码)`，正文小段只写经营、订单、产能、毛利率、客户、风险等业务主题。
-- 专家交流：使用问答形态，问题加粗，回答以 `【主题标签】` 开头，不写 `A:` 或 `A：`。
-- 其他类型：保留用户自定义会议类型；如局部出现问答，按专家交流问答格式处理。
-
-## 校对使用的数据和能力
-
-股票代码和标的校验：
-
-- 首选本地 `a-stock-data` 能力，尤其是 symbol lookup、resolve-targets、quote、stock-profile 等。
-- 使用 `scripts/query_symbol_candidates.py` 查询本地 A 股、港股、美股和别名映射。
-- A 股优先使用本地资源和 `.SH` / `.SZ` / `.BJ` 格式；中国投研语境默认先考虑 A 股，其次港股、美股。
-- 只有结果能确认时才写入代码；候选冲突或找不到时保留原文并写入存疑。
-
-行业术语和专有名词校验：
-
-- 对行业术语、产品名、技术路线、政策/事件词、客户名、机构/人物名、财务术语等，不只依赖 ASR。
-- 优先参考官方披露、公司网站、交易所文件、监管/协会资料、行业报告和可靠财经/新闻来源。
-- 如果音频听感、上下文和外部证据无法统一，保留原始表述，正文加粗标注，并在存疑表列出候选解释。
-
-MAS sidecar：
-
-- `target_attribution_ledger` 用于记录每段的主标的、提及标的、推荐标的和标的角色。
-- `evidence_ledger` 用于记录公司名、代码、术语、客户名、订单、数字、产能、价格等高风险 claim 的证据状态。
-- `suspect_confirmation` 用于记录不能确认的内容、上下文、候选项和建议人工确认路径。
-- Sidecar 不进入终稿正文；终稿仍保持当前 Markdown/Word contract。
-
-## Dify adapter 边界
-
-Dify 相关内容是调用层，不是核心 skill 输出规则。详细字段映射、review bridge、Skill Agent 分发和同步边界见：
+默认隔离目录：
 
 ```text
-skills/投资会议纪要整理/references/dify_adapter_guide.md
+.meeting-minutes-internal/
 ```
 
-保留以下边界：
+这些产物不得进入最终 Markdown/Word、Dify 知识库、Google Drive 同步输出或 sanitizer RAG 输出。
 
-- Dify 负责编排上传、转写/抽取、初审、类型 skill 调用、二审、归档确认和同步。
-- 基础 skill 和类型 skill 负责正文整理规则与 Markdown 输出 contract。
-- Dify 节点不得在 skill 输出后重写正文结构。
-- `input_reviewed` 缺失或为 false 时，不得运行纪要格式化。
-- Dify 返回字段如 `review_url`、`draft_id`、`history_url` 只能放在工作流输出或元数据里，不进入终稿正文。
-
-未经确认的初始转写、模型草稿和二审前内容不得进入正式归档、Google Drive 或 Dify 知识库。
-
-## 归档规则
-
-原始材料归档：
-
-- 归档根目录：`/Users/kumaai/Documents/Codex/workspace/投资纪要工作流/00 Inbox/会议原始记录`。
-- 优先使用会议日期；未知时使用当前日期，格式为 `YYYY-MM-DD`。
-- 每场会议单独建会话文件夹：`YYYY-MM-DD - 会议标题`。
-- 原始文件命名为：`YYYY-MM-DD - 会议标题 - 原始NN-材料类型.扩展名`。
-- 材料类型使用 `文稿`、`录音`、`录像`、`附件`。
-- 同名冲突时保留所有文件，追加时间戳或数字后缀。
-- 只复制原始文件，不删除或移动用户原文件。
-- 自动化写入前可先运行 `archive_raw_inputs.py --dry-run --json` 预览最终路径。
-
-终稿归档：
-
-- 默认输出目录：`/Users/kumaai/Documents/Codex/workspace/投资纪要工作流/01 Projects/会议纪要/YYYY-MM-DD/`。
-- 终稿文件优先命名为：`YYYY-MM-DD - 会议标题 - 会议类型.md` 和 `YYYY-MM-DD - 会议标题 - 会议类型.docx`。
-- 导出后只同步本次会议日期目录到 `gdrive:投资纪要工作流存档/投资纪要工作流/01 Projects/会议纪要/YYYY-MM-DD`，避免每次归档触发全量 Obsidian 工作流同步。
-- 终稿还会通过 `sync_minutes_to_dify_dataset.py` 写入 Dify `会议纪要整理知识库`。
-- 如果 Word、Dify 或 Google Drive 同步失败，保留本地 Markdown/Word，报告失败原因，不删除本地结果。
-- 清理历史输出时，只在明确要求下把旧文件移动到 `04 Archive/测试用`。
-
-## 验证和回归
+## Validators
 
 常用检查：
 
 ```bash
-python3 skills/投资会议纪要整理/scripts/validate_utf8_text.py README.md --require-cjk
-python3 skills/投资会议纪要整理/scripts/run_meeting_minutes_regression.py
-python3 skills/投资会议纪要整理/scripts/validate_meeting_minutes_contract.py NOTE.md
-python3 skills/投资会议纪要整理/scripts/validate_word_export.py NOTE.docx
-python3 skills/投资会议纪要整理/scripts/validate_mas_artifacts.py --cases skills/投资会议纪要整理/references/regression_samples/mas_cases.json --json
-python3 skills/投资会议纪要整理/scripts/transcribe_audio.py --check-model-cache
-python3 skills/投资会议纪要整理/scripts/check_investment_workflow_health.py --strict
-python3 skills/投资会议纪要整理/scripts/archive_raw_inputs.py INPUT.docx INPUT.mp3 --date 2026-06-17 --title "会议标题" --dry-run --json
-python3 skills/meeting-minutes-sanitizer/scripts/sanitize_minutes.py NOTE.md --output-dir outputs
+python3 skills/投资会议纪要整理/scripts/validate_utf8_text.py README.md skills/*/SKILL.md --require-cjk --portable-skill
+python3 skills/投资会议纪要整理/scripts/run_meeting_minutes_regression.py --json
+python3 skills/投资会议纪要整理/scripts/validate_meeting_minutes_contract.py NOTE.md --json
+python3 skills/投资会议纪要整理/scripts/validate_word_export.py NOTE.docx --markdown NOTE.md --json
+python3 skills/投资会议纪要整理/scripts/validate_analysis_ledger.py .meeting-minutes-internal/analysis_ledger.json --qa-report .meeting-minutes-internal/qa_report.json --json
+python3 skills/投资会议纪要整理/scripts/validate_title_target_consistency.py NOTE.md .meeting-minutes-internal/analysis_ledger.json --json
+python3 skills/投资会议纪要整理/scripts/score_target_attribution.py --actual ACTUAL.json --gold GOLD.json --json
+python3 skills/投资会议纪要整理/scripts/validate_custom_agents.py --json
 ```
 
-包发布或迁移前，应确认：
+`validate_meeting_minutes_contract.py` 的实际规则是：必须有会议元信息和 `## 一、逐发言人原文整理`；只有存在真实存疑时才输出 `## 二、存疑与待确认`。
 
-- 所有 `SKILL.md` 保持 UTF-8 无 BOM、LF 换行。
-- 中文文件名在压缩、传输和导入后没有乱码。
-- 私有 API key、Dify token、本机日志、运行缓存、模型权重和虚拟环境没有进入仓库。
-- 回归样例通过，默认输出仍符合两段式 contract。
+## Live Smoke Test
 
-## 不包含的内容
+修改 custom agents 后，当前 Codex 会话可能不会重新加载新 agent。若 live spawn 不可用，应记录：
 
-本仓库只保存可复用 skill、脚本、模板、样例和说明，不包含：
+```text
+PROJECT CUSTOM AGENT LIVE SPAWN = RESTART REQUIRED
+```
 
-- 本机私有配置和 API key。
-- Dify 私有 token 或数据集密钥。
-- Google Drive/rclone 凭证。
-- ASR 模型权重、下载缓存和 Python 虚拟环境。
-- Python wheels、平台相关二进制和其他部署期依赖缓存。
-- Obsidian 正式会议纪要、用户原始录音或转写原件。
-- 临时草稿、运行日志和 `__pycache__`。
+静态 schema 仍必须通过。Dify subagent 状态只能写 `PASS`、`FAIL` 或 `UNVERIFIED`。
 
-`skills/meeting-minutes-sanitizer` 的最小运行依赖见该目录下的 `requirements.txt`，当前只包含 Word 导出所需的 `python-docx`。
+## 隐私边界
 
-脚本中的本机路径是当前部署默认值。迁移到其他机器时，应把这些路径映射到目标环境的工作流根目录、模型缓存、Dify 地址、Obsidian vault 和 Google Drive 同步目标。
+不要提交：
+
+- 真实会议材料、原始录音、正式纪要或私有转写。
+- 私有绝对路径、review URL、draft URL、token、cookie、API key、Authorization/Bearer header。
+- ASR 模型权重、下载缓存、虚拟环境或本机私有配置。
+
+公共 fixtures 必须是合成或充分脱敏内容。
+
+## 已知限制
+
+- Dify 派生 Codex Subagent 尚未验证，Dify 仍以单 Agent fallback 为权威。
+- Custom agent live spawn 可能需要重启 Codex 才能加载新 `.codex/agents` 文件。
+- 真实生产启用前仍需要脱敏 blind-run 数据验证。
+- Word 导出依赖 `python-docx`。

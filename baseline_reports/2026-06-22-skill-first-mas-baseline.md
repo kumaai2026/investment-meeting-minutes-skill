@@ -1,7 +1,7 @@
 # Skill-first MAS Baseline
 
 Baseline date: 2026-06-22
-Repository: `/Users/kumaai/Documents/Codex/2026-06-10/skill-github`
+Repository: `<repo-root>`
 Branch at capture: `main`
 HEAD at capture: `0682da2f44be2aa2a96ff52e25d03cb3525d8657`
 Git status at capture: `main...origin/main`, no local changes
@@ -22,12 +22,12 @@ Git status at capture: `main...origin/main`, no local changes
 ## Baseline Commands And Results
 
 ```bash
-python3 /Users/kumaai/.codex/skills/.system/skill-creator/scripts/quick_validate.py skills/投资会议纪要整理
-python3 /Users/kumaai/.codex/skills/.system/skill-creator/scripts/quick_validate.py skills/投资会议纪要-多人复盘会
-python3 /Users/kumaai/.codex/skills/.system/skill-creator/scripts/quick_validate.py skills/投资会议纪要-上市公司交流
-python3 /Users/kumaai/.codex/skills/.system/skill-creator/scripts/quick_validate.py skills/投资会议纪要-专家交流
-python3 /Users/kumaai/.codex/skills/.system/skill-creator/scripts/quick_validate.py skills/投资会议纪要-其他
-python3 /Users/kumaai/.codex/skills/.system/skill-creator/scripts/quick_validate.py skills/meeting-minutes-sanitizer
+python3 <skill-creator>/scripts/quick_validate.py skills/投资会议纪要整理
+python3 <skill-creator>/scripts/quick_validate.py skills/投资会议纪要-多人复盘会
+python3 <skill-creator>/scripts/quick_validate.py skills/投资会议纪要-上市公司交流
+python3 <skill-creator>/scripts/quick_validate.py skills/投资会议纪要-专家交流
+python3 <skill-creator>/scripts/quick_validate.py skills/投资会议纪要-其他
+python3 <skill-creator>/scripts/quick_validate.py skills/meeting-minutes-sanitizer
 ```
 
 Result: all six skill folders returned `Skill is valid!`.
@@ -59,13 +59,13 @@ python3 skills/投资会议纪要整理/scripts/validate_meeting_minutes_contrac
 Result: both returned `ok=true`, with no errors or warnings.
 
 ```bash
-python3 skills/投资会议纪要整理/scripts/validate_word_export.py "/Users/kumaai/Documents/Codex/workspace/投资纪要工作流/01 Projects/会议纪要/2026-06-21/2026-06-21 - 科技AI与半导体材料复盘讨论 - 多人复盘会.docx" --markdown "/Users/kumaai/Documents/Codex/workspace/投资纪要工作流/01 Projects/会议纪要/2026-06-21/2026-06-21 - 科技AI与半导体材料复盘讨论 - 多人复盘会.md" --json
+python3 skills/投资会议纪要整理/scripts/validate_word_export.py "<workflow-root>/01 Projects/会议纪要/YYYY-MM-DD/<redacted-note.docx>" --markdown "<workflow-root>/01 Projects/会议纪要/YYYY-MM-DD/<redacted-note.md>" --json
 ```
 
 Result: `ok=true`, `paragraph_count=317`, `run_count=249`.
 
 ```bash
-python3 skills/投资会议纪要整理/scripts/validate_utf8_text.py "/Users/kumaai/Documents/Codex/workspace/投资纪要工作流/01 Projects/会议纪要/2026-06-21/2026-06-21 - 科技AI与半导体材料复盘讨论 - 多人复盘会.md" "/Users/kumaai/Documents/Codex/workspace/投资纪要工作流/01 Projects/会议纪要/2026-06-21/2026-06-21 - 科技AI与半导体材料复盘讨论 - 多人复盘会.docx" --require-cjk
+python3 skills/投资会议纪要整理/scripts/validate_utf8_text.py "<workflow-root>/01 Projects/会议纪要/YYYY-MM-DD/<redacted-note.md>" "<workflow-root>/01 Projects/会议纪要/YYYY-MM-DD/<redacted-note.docx>" --require-cjk
 ```
 
 Result: both files returned `ok`.
