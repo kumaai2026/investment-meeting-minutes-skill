@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Validate Skill-first MAS sidecar artifacts and sample final notes."""
+"""Deprecated validator for historical Skill-first MAS sidecar artifacts.
+
+Current conditional Subagent validation uses validate_analysis_ledger.py,
+validate_title_target_consistency.py, and score_target_attribution.py.
+"""
 
 from __future__ import annotations
 
@@ -355,7 +359,7 @@ def validate_cases(cases_path: Path) -> dict[str, Any]:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="校验 Skill-first MAS sidecar artifacts")
+    parser = argparse.ArgumentParser(description="已弃用：校验历史 Skill-first MAS sidecar artifacts")
     parser.add_argument("artifacts", nargs="*", help="单个 artifact JSON 文件")
     parser.add_argument("--cases", help="MAS regression cases JSON")
     parser.add_argument("--final-markdown", help="额外校验终稿 Markdown 不含过程字段")
