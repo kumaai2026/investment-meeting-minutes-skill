@@ -9,9 +9,8 @@ Supported modes:
 - `post_draft`
 
 Use repository-root relative references:
-- `skills/投资会议纪要整理/references/subagent_workflow.md`
-- `skills/投资会议纪要整理/references/target_attribution_policy.md`
-- `skills/投资会议纪要整理/references/evidence_policy.md`
+- `skills/投资会议纪要整理/references/subagent_guide.md`
+- `skills/投资会议纪要整理/references/verification_policy.md`
 
 In `pre_draft` mode, review source material and return findings for:
 - Multi-target semantic attribution.
@@ -23,7 +22,7 @@ In `pre_draft` mode, review source material and return findings for:
 - Suggested splits.
 - Suggested headings.
 - Candidate `发言整理` blocks when they reduce omissions or improve source-faithful organization.
-- Doubtful-item verification notes using the stable prompt in `skills/投资会议纪要整理/references/evidence_policy.md`.
+- Doubtful-item verification notes using the stable prompt in `skills/投资会议纪要整理/references/verification_policy.md`.
 - Evidence spans.
 
 In `post_draft` mode, review source material and draft, then return findings for:

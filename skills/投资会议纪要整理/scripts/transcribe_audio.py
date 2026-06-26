@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import difflib
 import json
 import os
 import re
@@ -14,14 +15,30 @@ import tempfile
 from pathlib import Path
 
 DEFAULT_SENSEVOICE_MODEL = "iic/SenseVoiceSmall"
-DEFAULT_LOCAL_CACHE = Path("/Users/nananaranja/Documents/Codex/asr-model-cache")
+DEFAULT_PARAFORMER_MODEL = "iic/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-pytorch"
+DEFAULT_LOCAL_CACHE = Path.home() / "Documents/Codex/asr-model-cache"
 MODEL_ALIASES = {
     "iic/SenseVoiceSmall": ("modelscope", "models/iic/SenseVoiceSmall"),
     "SenseVoiceSmall": ("modelscope", "models/iic/SenseVoiceSmall"),
+    DEFAULT_PARAFORMER_MODEL: (
+        "modelscope",
+        "models/iic/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-pytorch",
+    ),
+    "Paraformer-Large": (
+        "modelscope",
+        "models/iic/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-pytorch",
+    ),
+    "paraformer": (
+        "modelscope",
+        "models/iic/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-pytorch",
+    ),
 }
 REQUIRED_MODEL_FILES = {
     "iic/SenseVoiceSmall": ("config.yaml", "model.pt"),
     "SenseVoiceSmall": ("config.yaml", "model.pt"),
+    DEFAULT_PARAFORMER_MODEL: ("config.yaml", "model.pt"),
+    "Paraformer-Large": ("config.yaml", "model.pt"),
+    "paraformer": ("config.yaml", "model.pt"),
 }
 SENSEVOICE_TEXT_FORMATS = {"txt", "json", "all"}
 
@@ -46,14 +63,13 @@ def _model_cache_root() -> Path | None:
         os.environ.get("FUNASR_MODEL_CACHE"),
         os.environ.get("MODELSCOPE_CACHE"),
         DEFAULT_LOCAL_CACHE,
-        "/Users/nananaranja/Documents/Codex/asr-model-cache",
+        Path.home() / ".cache/modelscope/hub",
+        Path.home() / ".cache/modelscope",
     ]
     for value in candidates:
         if not value:
             continue
         path = Path(value).expanduser().resolve()
-        if path.name == "modelscope":
-            path = path.parent
         if path.exists():
             return path
     return None
@@ -70,10 +86,24 @@ def _model_candidates(model_name: str) -> list[Path]:
     if not alias or not root:
         return []
     source, relative_path = alias
-    candidates = [root / source / relative_path]
+    candidates = [
+        root / source / relative_path,
+        root / relative_path,
+        root / "hub" / relative_path,
+    ]
     if source == "modelscope" and relative_path.startswith("models/"):
         candidates.append(root / source / relative_path.removeprefix("models/"))
-    return candidates
+        candidates.append(root / relative_path.removeprefix("models/"))
+        candidates.append(root / "hub" / relative_path.removeprefix("models/"))
+        candidates.append(root / "hub" / "models" / relative_path.removeprefix("models/"))
+    unique: list[Path] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        key = str(candidate)
+        if key not in seen:
+            seen.add(key)
+            unique.append(candidate)
+    return unique
 
 
 def _resolve_model_ref(model_name: str, *, allow_remote_model_lookup: bool = False) -> str:
@@ -115,7 +145,10 @@ def _model_cache_status(model_name: str) -> dict[str, object]:
 def _model_cache_report() -> dict[str, object]:
     return {
         "cache_root": str(_model_cache_root() or ""),
-        "models": {"sensevoice": _model_cache_status(DEFAULT_SENSEVOICE_MODEL)},
+        "models": {
+            "sensevoice": _model_cache_status(DEFAULT_SENSEVOICE_MODEL),
+            "paraformer": _model_cache_status(DEFAULT_PARAFORMER_MODEL),
+        },
     }
 
 
@@ -320,6 +353,51 @@ def _format_speaker_transcript(sentences: list[dict[str, object]]) -> str:
     return "\n".join(line for line in lines if line).strip()
 
 
+def _build_timestamp_index(sentences: list[dict[str, object]]) -> list[dict[str, object]]:
+    index: list[dict[str, object]] = []
+    for offset, item in enumerate(sentences):
+        text = str(item.get("text") or "").strip()
+        if not text:
+            continue
+        start_ms = item.get("start_ms", "")
+        end_ms = item.get("end_ms", "")
+        source = str(item.get("source") or "sensevoice").strip() or "sensevoice"
+        has_precise_time = str(start_ms).strip() != "" and str(end_ms).strip() != ""
+        index.append(
+            {
+                "start": item.get("start") or _ms_to_timestamp(start_ms),
+                "end": item.get("end") or _ms_to_timestamp(end_ms),
+                "start_ms": start_ms,
+                "end_ms": end_ms,
+                "chunk_index": item.get("chunk_index", 0),
+                "text": text,
+                "speaker": item.get("speaker", ""),
+                "source": source if source.startswith("sensevoice") else f"sensevoice_{source}",
+                "precision": "sentence" if has_precise_time else "segment",
+                "index": offset,
+            }
+        )
+    return index
+
+
+def _text_diff_preview(primary_text: str, auxiliary_text: str, *, limit: int = 120) -> str:
+    primary_lines = [line.strip() for line in primary_text.splitlines() if line.strip()]
+    auxiliary_lines = [line.strip() for line in auxiliary_text.splitlines() if line.strip()]
+    if not primary_lines or not auxiliary_lines:
+        return ""
+    diff = list(
+        difflib.unified_diff(
+            primary_lines,
+            auxiliary_lines,
+            fromfile="sensevoice",
+            tofile="paraformer",
+            lineterm="",
+            n=1,
+        )
+    )
+    return "\n".join(diff[:limit]).strip()
+
+
 def _select_device(requested: str = "auto") -> str:
     requested = (requested or "auto").strip().lower()
     if requested and requested != "auto":
@@ -334,6 +412,50 @@ def _select_device(requested: str = "auto") -> str:
     return "cpu"
 
 
+def _run_paraformer_auxiliary(
+    input_file: Path,
+    model_name: str,
+    allow_remote_model_lookup: bool,
+) -> dict[str, object]:
+    try:
+        from funasr import AutoModel  # type: ignore
+    except Exception as exc:
+        return {
+            "engine": "paraformer",
+            "model": model_name,
+            "ok": False,
+            "text": "",
+            "status": f"缺少 Paraformer 运行依赖: {exc}",
+        }
+
+    try:
+        model_ref = _resolve_model_ref(model_name, allow_remote_model_lookup=allow_remote_model_lookup)
+        model = AutoModel(
+            model=model_ref,
+            trust_remote_code=True,
+            device=_select_device("auto"),
+            disable_update=True,
+        )
+        result = model.generate(input=str(input_file), batch_size_s=60)
+        text = _extract_model_text(result)
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "engine": "paraformer",
+            "model": model_name,
+            "ok": False,
+            "text": "",
+            "status": f"Paraformer 辅助校验未完成: {exc}",
+        }
+
+    return {
+        "engine": "paraformer",
+        "model": model_name,
+        "ok": True,
+        "text": text,
+        "status": "Paraformer 辅助转写完成；仅作为校对证据，不自动覆盖 SenseVoice 主转写。",
+    }
+
+
 def _run_sensevoice(
     input_file: Path,
     output_dir: Path,
@@ -342,6 +464,9 @@ def _run_sensevoice(
     output_format: str,
     allow_remote_model_lookup: bool,
     include_raw_json: bool,
+    aux_engine: str,
+    aux_model: str,
+    aux_strict: bool,
 ) -> int:
     if output_format not in SENSEVOICE_TEXT_FORMATS:
         print(
@@ -385,9 +510,52 @@ def _run_sensevoice(
 
     speaker_sentences = _extract_sentence_info(result)
     output_text = _format_speaker_transcript(speaker_sentences) or _extract_model_text(result)
+    timestamp_index = _build_timestamp_index(speaker_sentences)
+    if not timestamp_index and output_text:
+        timestamp_index = [
+            {
+                "start": "",
+                "end": "",
+                "start_ms": "",
+                "end_ms": "",
+                "chunk_index": 0,
+                "text": output_text,
+                "speaker": "",
+                "source": "sensevoice",
+                "precision": "unavailable",
+                "index": 0,
+            }
+        ]
+    auxiliary: dict[str, object] = {
+        "engine": "",
+        "model": "",
+        "ok": False,
+        "text": "",
+        "status": "",
+    }
+    if aux_engine == "paraformer":
+        auxiliary = _run_paraformer_auxiliary(
+            input_file=input_file,
+            model_name=aux_model,
+            allow_remote_model_lookup=allow_remote_model_lookup,
+        )
+        if aux_strict and not auxiliary.get("ok"):
+            print(str(auxiliary.get("status") or "Paraformer auxiliary transcription failed"), file=sys.stderr)
+            return 1
+
     stem = input_file.stem
     if output_format in {"txt", "all"}:
         (output_dir / f"{stem}.txt").write_text(output_text + "\n", encoding="utf-8")
+        if auxiliary.get("ok") and auxiliary.get("text"):
+            (output_dir / f"{stem}.paraformer.txt").write_text(
+                str(auxiliary.get("text")).strip() + "\n",
+                encoding="utf-8",
+            )
+    if timestamp_index:
+        (output_dir / f"{stem}.timestamp_index.json").write_text(
+            json.dumps(timestamp_index, ensure_ascii=False, indent=2, default=str),
+            encoding="utf-8",
+        )
     if output_format in {"json", "all"}:
         payload = {
             "engine": "sensevoice",
@@ -399,6 +567,16 @@ def _run_sensevoice(
             "timestamp_detected": bool(speaker_sentences),
             "speakers": sorted({str(item.get("speaker")) for item in speaker_sentences if item.get("speaker")}),
             "sentence_info": speaker_sentences,
+            "timestamp_index": timestamp_index,
+            "timestamp_index_path": str(output_dir / f"{stem}.timestamp_index.json") if timestamp_index else "",
+            "auxiliary_engine": auxiliary.get("engine") or "",
+            "auxiliary_model": auxiliary.get("model") or "",
+            "auxiliary_text": auxiliary.get("text") or "",
+            "auxiliary_ok": bool(auxiliary.get("ok")),
+            "auxiliary_status": auxiliary.get("status") or "",
+            "asr_comparison_diff": _text_diff_preview(output_text, str(auxiliary.get("text") or ""))
+            if auxiliary.get("ok")
+            else "",
         }
         if include_raw_json:
             payload["raw"] = result
@@ -423,12 +601,33 @@ def main() -> int:
         "--engine",
         default="auto",
         choices=["auto", "sensevoice"],
-        help="兼容旧调用的 ASR 引擎参数；当前只运行 SenseVoice",
+        help="兼容旧调用的主 ASR 引擎参数；主转写固定使用 SenseVoice",
     )
     parser.add_argument(
         "--model",
         default=DEFAULT_SENSEVOICE_MODEL,
         help="SenseVoice 模型名，默认 iic/SenseVoiceSmall",
+    )
+    parser.add_argument(
+        "--aux-engine",
+        default="paraformer",
+        choices=["none", "paraformer"],
+        help="辅助校对 ASR；默认 paraformer，仅作为校对证据，不替换 SenseVoice 主转写",
+    )
+    parser.add_argument(
+        "--aux-model",
+        default=DEFAULT_PARAFORMER_MODEL,
+        help="Paraformer 辅助模型名",
+    )
+    parser.add_argument(
+        "--aux-strict",
+        action="store_true",
+        help="Paraformer 辅助校验失败时让本次转写失败；默认只记录失败状态并保留 SenseVoice 主结果",
+    )
+    parser.add_argument(
+        "--no-aux",
+        action="store_true",
+        help="禁用辅助 ASR 校对，只运行 SenseVoice",
     )
     parser.add_argument(
         "--cache-dir",
@@ -469,7 +668,13 @@ def main() -> int:
         report = _model_cache_report()
         models = report.get("models", {})
         sensevoice = models.get("sensevoice") if isinstance(models, dict) else {}
-        if isinstance(sensevoice, dict) and sensevoice.get("complete"):
+        paraformer = models.get("paraformer") if isinstance(models, dict) else {}
+        if (
+            isinstance(sensevoice, dict)
+            and sensevoice.get("complete")
+            and isinstance(paraformer, dict)
+            and paraformer.get("complete")
+        ):
             return 0
         return 1
 
@@ -494,6 +699,9 @@ def main() -> int:
             output_format=args.output_format,
             allow_remote_model_lookup=args.allow_remote_model_lookup,
             include_raw_json=args.debug_raw_json,
+            aux_engine="none" if args.no_aux else args.aux_engine,
+            aux_model=args.aux_model,
+            aux_strict=args.aux_strict,
         )
 
     print("未知 ASR 引擎；只能使用 SenseVoice。", file=sys.stderr)

@@ -21,11 +21,13 @@ TRANSCRIBE_SCRIPT = SCRIPT_DIR / "transcribe_audio.py"
 LOG_DIR = Path("/Users/kumaai/Library/Logs/kumaai-sync")
 DEFAULT_PRIMARY_ENGINE = "sensevoice"
 DEFAULT_PRIMARY_MODEL = "iic/SenseVoiceSmall"
+DEFAULT_AUXILIARY_ENGINE = "paraformer"
+DEFAULT_AUXILIARY_MODEL = "iic/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-pytorch"
 DEFAULT_MODEL_CACHE = os.environ.get(
     "SENSEVOICE_MODEL_CACHE",
     os.environ.get(
         "FUNASR_MODEL_CACHE",
-        "/Users/nananaranja/Documents/Codex/asr-model-cache",
+        str(Path.home() / ".cache/modelscope/hub"),
     ),
 )
 DEFAULT_TRANSCRIBE_PYTHON = os.environ.get("SENSEVOICE_PYTHON", "")
@@ -33,6 +35,7 @@ DEFAULT_TRANSCRIBE_PYTHON = os.environ.get("SENSEVOICE_PYTHON", "")
 LOG_DIR = Path(os.environ.get("KUMAAI_SYNC_LOG_DIR", str(Path.home() / "Library/Logs/kumaai-sync")))
 MODEL_REQUIREMENTS = {
     "sensevoice": ("iic/SenseVoiceSmall", ("config.yaml", "model.pt")),
+    "paraformer": (DEFAULT_AUXILIARY_MODEL, ("config.yaml", "model.pt")),
 }
 
 
@@ -106,7 +109,14 @@ def _model_cache_status() -> dict:
     root = Path(DEFAULT_MODEL_CACHE).expanduser()
     models = {}
     for name, (relative_path, required_files) in MODEL_REQUIREMENTS.items():
-        candidates = [root / "modelscope" / "models" / relative_path, root / "modelscope" / relative_path]
+        candidates = [
+            root / "modelscope" / "models" / relative_path,
+            root / "modelscope" / relative_path,
+            root / "models" / relative_path,
+            root / relative_path,
+            root / "hub" / "models" / relative_path,
+            root / "hub" / relative_path,
+        ]
         path = next(
             (
                 item
@@ -204,6 +214,8 @@ class SenseVoiceHandler(BaseHTTPRequestHandler):
                     "model": DEFAULT_PRIMARY_MODEL,
                     "primary_engine": DEFAULT_PRIMARY_ENGINE,
                     "primary_model": DEFAULT_PRIMARY_MODEL,
+                    "auxiliary_engine": DEFAULT_AUXILIARY_ENGINE,
+                    "auxiliary_model": DEFAULT_AUXILIARY_MODEL,
                     "model_cache": _model_cache_status(),
                 },
             )
@@ -275,6 +287,19 @@ class SenseVoiceHandler(BaseHTTPRequestHandler):
                 "speaker_segments": speaker_segments,
                 "timestamp_segments": timestamp_segments,
                 "sentence_info": timestamp_segments,
+                "timestamp_index": primary_json.get("timestamp_index") or [],
+                "timestamp_index_path": primary_json.get("timestamp_index_path") or "",
+                "auxiliary_engine": primary_json.get("auxiliary_engine") or "",
+                "auxiliary_model": primary_json.get("auxiliary_model") or "",
+                "auxiliary_text": primary_json.get("auxiliary_text") or "",
+                "auxiliary_ok": bool(primary_json.get("auxiliary_ok")),
+                "auxiliary_status": primary_json.get("auxiliary_status") or "",
+                "asr_comparison_diff": primary_json.get("asr_comparison_diff") or "",
+                "auxiliary_transcripts": {
+                    "paraformer": primary_json.get("auxiliary_text") or "",
+                }
+                if primary_json.get("auxiliary_text")
+                else {},
             }
             if not primary_ok:
                 payload["error"] = primary_error or "SenseVoice transcription failed"
