@@ -2,6 +2,18 @@
 
 Use this file only when the meeting-minutes skill is called from a Dify workflow or the local Dify Skill Agent plugin. The base skill is the source of truth for meeting-note content and Markdown format.
 
+## Contents
+
+- Boundary
+- Required Gates
+- Meeting Type Formatting
+- Input Fields
+- Subagent Use
+- Doubtful-Item Verification Prompt
+- Returned Fields
+- Archive And Sync
+- Failure Policy
+
 ## Boundary
 
 - Dify is an orchestration adapter for upload, extraction/transcription, review gates, archive confirmation, export, and sync.
@@ -74,7 +86,7 @@ These outputs are inputs to the final writer. They must not be copied directly i
 
 ## Doubtful-Item Verification Prompt
 
-Use the stable verification prompt in `references/evidence_policy.md` for every non-person doubtful item before final-note formatting. Dify may implement it as one dedicated prompt node or as part of the Skill Agent prompt, but the required inputs and output fields must stay aligned with that canonical prompt.
+Use the stable verification prompt in `references/verification_policy.md` for every non-person doubtful item before final-note formatting. Dify may implement it as one dedicated prompt node or as part of the Skill Agent prompt, but the required inputs and output fields must stay aligned with that canonical prompt.
 
 ## Returned Fields
 

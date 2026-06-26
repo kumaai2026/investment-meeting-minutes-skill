@@ -11,7 +11,7 @@
 - 基础 skill 是唯一会议纪要 skill；会议类型只影响最终格式细节。
 - 主 workflow 固定为：转录 -> 校对 -> 识别 -> 编辑 -> 排版。
 - `发言整理` 按 `发言人/版块` 分段；每段标题覆盖该段提到的全部标的，不强制一个标的一段。
-- 非人名存疑项统一调用 `references/evidence_policy.md` 中的稳定核验 prompt。
+- 非人名存疑项统一调用 `references/verification_policy.md` 中的稳定核验 prompt。
 - Validator 只检查格式、章节、表头、Word 样式、编码和样例回归，不伪验证联网核验是否真实发生。
 - Dify 只是上传、抽取/转写、人工关口、归档确认和同步 adapter；具体规则见 `skills/投资会议纪要整理/references/dify_adapter_guide.md`。
 
