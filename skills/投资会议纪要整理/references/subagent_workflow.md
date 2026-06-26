@@ -1,8 +1,10 @@
 # Subagent-Priority Workflow
 
-Use this file when a meeting is long, noisy, multi-speaker, multi-target, or fact-sensitive enough that a single-pass writer is likely to miss information or distort meaning.
+Use this file when a meeting is long, noisy, multi-speaker, multi-target, or fact-sensitive enough that a single-pass writer is likely to miss information or distort meaning. Subagents are risk-triggered reviewers, not the default path for every meeting.
 
 The workflow is Subagent-priority with a single final writer. Subagents may produce structured intermediate material, but the main workflow is the only writer of final Markdown, Word, archive, and sync artifacts.
+
+For short, clean `document_only` sources with clear speakers and low entity uncertainty, skip Subagents and run the single-writer path plus formatting validators. Use Subagents only for the risk triggers below or when human review asks for an omission/distortion check.
 
 ## Architecture
 

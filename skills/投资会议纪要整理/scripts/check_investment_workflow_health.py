@@ -268,7 +268,6 @@ def sensevoice_service_model_cache_check(*, strict: bool) -> dict[str, Any]:
         cache_root=model_cache.get("cache_root"),
         python=model_cache.get("python"),
         incomplete=required_incomplete,
-        optional_incomplete=optional_incomplete,
     )
 
 
@@ -690,7 +689,59 @@ def skill_sync_checks() -> list[dict[str, Any]]:
     return checks
 
 
-def collect_checks(include_public: bool, *, strict: bool = False, runtime_smoke: bool = False) -> list[dict[str, Any]]:
+def collect_checks(
+    include_public: bool,
+    *,
+    strict: bool = False,
+    runtime_smoke: bool = False,
+    profile: str = "full",
+) -> list[dict[str, Any]]:
+    profile = (profile or "full").strip().lower()
+
+    if profile == "asr":
+        checks = strict_runtime_checks(strict=strict, runtime_smoke=runtime_smoke)
+        if include_public:
+            checks.append(public_access_check())
+        return checks
+
+    if profile == "export":
+        checks = [
+            path_check("Obsidian Vault", VAULT_DIR, writable=True),
+            path_check("原始记录归档目录", RAW_DIR, writable=True),
+            path_check("正式会议纪要目录", MINUTES_DIR, writable=True),
+            python_module_check("Python 依赖: python-docx", "docx", strict=strict),
+            command_exists_check("rclone", "rclone", Path("/Users/kumaai/.local/bin/rclone")),
+            rclone_log_check(),
+        ]
+        if include_public:
+            checks.append(public_access_check())
+        return checks
+
+    if profile == "dify":
+        checks = [
+            path_check("人工校对草稿目录", REVIEW_DRAFTS_DIR, writable=True),
+            path_check("知识库映射文件", MAPPING_PATH),
+            http_check(
+                "Dify 工作流入口",
+                "http://localhost:18081/explore/installed/4e99e8b0-7c35-4d38-a51f-5cbcc4ed1093",
+            ),
+            http_check("人工校对服务", "http://127.0.0.1:8767/health", expect_json_ok=True),
+            http_check("Obsidian 导出桥", "http://127.0.0.1:8766/health", expect_json_ok=True),
+            http_check("SenseVoice 转录服务", "http://127.0.0.1:8765/health", expect_json_ok=True),
+            docker_check(),
+            dify_workflow_output_contract_check(),
+            mapping_audit_check(),
+            external_knowledge_config_check(),
+            access_control_check(),
+            access_audit_log_check(),
+        ]
+        if strict:
+            checks.extend(strict_runtime_checks(strict=True, runtime_smoke=runtime_smoke))
+        checks.extend(skill_sync_checks())
+        if include_public:
+            checks.append(public_access_check())
+        return checks
+
     checks: list[dict[str, Any]] = [
         path_check("Obsidian Vault", VAULT_DIR, writable=True),
         path_check("原始记录归档目录", RAW_DIR, writable=True),
@@ -779,13 +830,25 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="一键检查投资会议纪要工作流本机健康状态")
     parser.add_argument("--json", action="store_true", help="输出 JSON")
     parser.add_argument("--include-public", action="store_true", help="额外检查公网域名 kuma.d91.global")
+    parser.add_argument(
+        "--profile",
+        choices=["asr", "export", "dify", "full"],
+        default="full",
+        help="检查范围；默认 full。日常音频建议 asr，导出前建议 export，Dify 上线前建议 dify",
+    )
     parser.add_argument("--strict", action="store_true", help="正式运行前严格检查本地依赖和 ASR 模型缓存；缺失即失败，不触发下载")
     parser.add_argument("--runtime-smoke", action="store_true", help="在 --strict 中额外调用 SenseVoice 服务执行真实短音频转写；耗时较长")
     args = parser.parse_args()
 
-    checks = collect_checks(include_public=args.include_public, strict=args.strict, runtime_smoke=args.runtime_smoke)
+    checks = collect_checks(
+        include_public=args.include_public,
+        strict=args.strict,
+        runtime_smoke=args.runtime_smoke,
+        profile=args.profile,
+    )
     report = {
         "generated_at": now_iso(),
+        "profile": args.profile,
         "strict": bool(args.strict),
         "runtime_smoke": bool(args.runtime_smoke),
         "summary": summarize(checks),

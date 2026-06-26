@@ -431,7 +431,7 @@ def organize_archive_before_sync() -> tuple[bool, str]:
     return True, message or "归档整理完成"
 
 
-def export_note(source_file: Path, export_dir: Path, date_override: str | None) -> ExportResult:
+def export_note(source_file: Path, export_dir: Path, date_override: str | None, *, sync: bool = True) -> ExportResult:
     raw_content = source_file.read_text(encoding="utf-8")
     source_encoding_ok, source_encoding_message = validate_utf8_text_file(source_file, require_cjk=True)
     if not source_encoding_ok:
@@ -457,12 +457,14 @@ def export_note(source_file: Path, export_dir: Path, date_override: str | None) 
         docx_ok, docx_message = validate_docx_utf8(docx_path, require_cjk=True)
     sync_ok = False
     sync_message = "跳过同步：Markdown 或 Word 未全部生成"
-    if md_ok and docx_ok:
+    if md_ok and docx_ok and sync:
         archive_ok, archive_message = organize_archive_before_sync()
         sync_remote_dir = f"{DEFAULT_REMOTE_DIR}/01 Projects/会议纪要/{meeting_date}"
         sync_ok, sync_message = sync_vault_to_gdrive(export_dir, sync_remote_dir)
         if not archive_ok:
             sync_message = f"{sync_message}; 归档整理未完成: {archive_message}"
+    elif md_ok and docx_ok:
+        sync_message = "跳过同步：--no-sync"
 
     return ExportResult(
         md_path=md_path,
@@ -481,6 +483,7 @@ def main() -> int:
     parser.add_argument("input_file", help="已整理完成的 Markdown 文件")
     parser.add_argument("--export-dir", default=str(DEFAULT_EXPORT_DIR), help=f"导出目录，默认 {DEFAULT_EXPORT_DIR}")
     parser.add_argument("--meeting-date", help="覆盖系统日期，格式 YYYY-MM-DD")
+    parser.add_argument("--no-sync", action="store_true", help="只生成本地 Markdown+Word，不触发归档整理或 Google Drive 同步")
     args = parser.parse_args()
 
     source_file = Path(args.input_file).expanduser().resolve()
@@ -489,7 +492,7 @@ def main() -> int:
         return 1
 
     export_dir = Path(args.export_dir).expanduser().resolve()
-    result = export_note(source_file, export_dir, args.meeting_date)
+    result = export_note(source_file, export_dir, args.meeting_date, sync=not args.no_sync)
 
     if result.md_created:
         print(f"Markdown: {result.md_path}")

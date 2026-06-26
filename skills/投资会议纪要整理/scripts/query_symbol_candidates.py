@@ -106,6 +106,10 @@ def load_aliases(path: Path) -> list[dict[str, str]]:
         return [dict(row) for row in csv.DictReader(handle) if row.get("query") and row.get("symbol")]
 
 
+def load_symbol_rows(root: Path) -> list[dict[str, str]]:
+    return load_a_share(root) + load_hk(root) + load_us(root)
+
+
 def candidate_from_alias(query: str, aliases: list[dict[str, str]]) -> list[Candidate]:
     normalized_query = normalize_text(query)
     candidates: list[Candidate] = []
@@ -172,10 +176,20 @@ def dedupe(candidates: Iterable[Candidate]) -> list[Candidate]:
     return sorted(best.values(), key=lambda item: (-item.confidence, item.market, item.symbol))
 
 
-def query_symbols(query: str, *, market: str, limit: int, root: Path, alias_path: Path) -> dict[str, object]:
-    rows = load_a_share(root) + load_hk(root) + load_us(root)
+def query_symbols(
+    query: str,
+    *,
+    market: str,
+    limit: int,
+    root: Path,
+    alias_path: Path,
+    rows: list[dict[str, str]] | None = None,
+    aliases: list[dict[str, str]] | None = None,
+) -> dict[str, object]:
+    rows = rows if rows is not None else load_symbol_rows(root)
+    aliases = aliases if aliases is not None else load_aliases(alias_path)
     candidates: list[Candidate] = []
-    candidates.extend(candidate_from_alias(query, load_aliases(alias_path)))
+    candidates.extend(candidate_from_alias(query, aliases))
     for row in rows:
         if not market_allowed(row["market"], market):
             continue
@@ -198,6 +212,22 @@ def query_symbols(query: str, *, market: str, limit: int, root: Path, alias_path
     }
 
 
+def read_batch_queries(path: Path) -> list[str]:
+    queries: list[str] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        item = line.strip()
+        if item and not item.startswith("#"):
+            queries.append(item)
+    return queries
+
+
+def print_batch_text(payloads: list[dict[str, object]]) -> None:
+    for index, payload in enumerate(payloads):
+        if index:
+            print()
+        print_text(payload)
+
+
 def print_text(payload: dict[str, object]) -> None:
     print(f"查询: {payload['query']}")
     print(f"状态: {payload['status']}")
@@ -216,7 +246,9 @@ def print_text(payload: dict[str, object]) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="本地查询股票代码候选和置信度")
-    parser.add_argument("query", help="公司名、简称、股票代码或 ticker")
+    parser.add_argument("query", nargs="?", help="公司名、简称、股票代码或 ticker")
+    parser.add_argument("--query", dest="extra_queries", action="append", default=[], help="追加查询词，可重复")
+    parser.add_argument("--batch-file", help="批量查询文件，每行一个公司名、简称、股票代码或 ticker")
     parser.add_argument("--market", choices=["all", "A", "HK", "US", "NASDAQ", "NYSE", "AMEX"], default="all")
     parser.add_argument("--limit", type=int, default=8)
     parser.add_argument("--root", default=str(DEFAULT_SYMBOL_ROOT), help="market-symbols 目录")
@@ -224,18 +256,50 @@ def main() -> int:
     parser.add_argument("--json", action="store_true", help="输出 JSON")
     args = parser.parse_args()
 
-    payload = query_symbols(
-        args.query,
-        market=args.market,
-        limit=args.limit,
-        root=Path(args.root).expanduser(),
-        alias_path=Path(args.aliases).expanduser(),
-    )
+    queries: list[str] = []
+    if args.query:
+        queries.append(args.query)
+    queries.extend(args.extra_queries)
+    if args.batch_file:
+        queries.extend(read_batch_queries(Path(args.batch_file).expanduser()))
+    queries = [item.strip() for item in queries if item.strip()]
+    if not queries:
+        parser.error("请提供 query、--query 或 --batch-file")
+
+    root = Path(args.root).expanduser()
+    alias_path = Path(args.aliases).expanduser()
+    rows = load_symbol_rows(root)
+    aliases = load_aliases(alias_path)
+    payloads = [
+        query_symbols(
+            query,
+            market=args.market,
+            limit=args.limit,
+            root=root,
+            alias_path=alias_path,
+            rows=rows,
+            aliases=aliases,
+        )
+        for query in queries
+    ]
     if args.json:
-        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        if len(payloads) == 1:
+            print(json.dumps(payloads[0], ensure_ascii=False, indent=2))
+        else:
+            print(
+                json.dumps(
+                    {
+                        "query_count": len(payloads),
+                        "ok": all(payload["status"] != "not_found" for payload in payloads),
+                        "results": payloads,
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
     else:
-        print_text(payload)
-    return 0 if payload["candidates"] else 1
+        print_batch_text(payloads)
+    return 0 if all(payload["candidates"] for payload in payloads) else 1
 
 
 if __name__ == "__main__":

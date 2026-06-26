@@ -21,15 +21,25 @@ Not allowed during a live meeting job:
 - Estimate timestamps from cleaned-note text position.
 - Pretend Word, Dify, or Google Drive sync succeeded when the step failed.
 
-## Strict Check
+## Readiness Profiles
 
-Run this before production-like use:
+Use the narrowest readiness profile that matches the next expensive step:
 
 ```bash
-python3 scripts/check_investment_workflow_health.py --strict
+python3 scripts/check_investment_workflow_health.py --profile asr --strict
+python3 scripts/check_investment_workflow_health.py --profile export
+python3 scripts/check_investment_workflow_health.py --profile dify
+python3 scripts/check_investment_workflow_health.py --profile full --strict
 ```
 
-Strict mode should fail if required local runtime assets are missing:
+Profile intent:
+
+- `asr`: check only local transcription prerequisites and the SenseVoice service/cache. Use before audio transcription.
+- `export`: check local archive/export paths, Word dependency, and rclone availability/log status. Use before final Markdown + Word export.
+- `dify`: check Dify, review/export bridges, workflow output contract, sync mapping, and access-control plumbing. Use before production-like Dify imports.
+- `full`: run the broad machine health audit. Use for deployment validation, not for every meeting note.
+
+Strict ASR/full mode should fail if required local runtime assets are missing:
 
 - `funasr`
 - `modelscope`
