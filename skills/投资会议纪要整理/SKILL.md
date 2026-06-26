@@ -9,7 +9,7 @@ description: "Use when Codex needs to turn a Chinese investment meeting recordin
 
 Produce a strict Chinese investment meeting note from the current meeting's audio, transcript, document, or mixed materials. Preserve the speaker's meaning, validate names and stock codes before writing confirmed entities, and export the human-confirmed Markdown + Word note.
 
-The operating model is Subagent-priority with a single final writer. Use Subagents to improve coverage, factual checking, and text quality, but write final Markdown, Word, archive outputs, and sync payloads only through the main workflow.
+Use the fastest safe path for the source risk. The default path is a single final writer with deterministic checks; enable Subagents only when the source is long, noisy, conflict-heavy, multi-target, or fact-sensitive. Write final Markdown, Word, archive outputs, and sync payloads only through the main workflow.
 
 For Dify workflow integration, read `references/dify_adapter_guide.md`.
 
@@ -17,14 +17,21 @@ For Dify workflow integration, read `references/dify_adapter_guide.md`.
 
 - Workflow after input archive: 转录 -> 校对 -> 识别 -> 编辑 -> 排版.
 - Source boundary: use only current-session materials as meeting-content sources. External sources may verify names, codes, terms, or public facts, but must not add meeting content.
-- ASR: use local SenseVoice only. Do not switch to Whisper or another ASR. If SenseVoice cannot run, continue only with provided text or an existing transcript.
+- ASR: use local SenseVoiceSmall as the primary transcript model and FunASR `fa-zh` / timestamp predictor only to align the SenseVoice chunk text into a sentence-level timestamp index. Do not switch to Whisper or another ASR. If the local ASR/timestamp chain cannot run, continue only with provided text or an existing transcript.
 - Final writer: Subagents may produce intermediate notes, candidate blocks, verification notes, and omission findings; they must not directly write final deliverables.
+- Run profile: prefer `fast_document` for short, clean document-only sources; use `standard` for ordinary meetings; use `strict_audio_or_dify` for long audio, audio/document conflicts, production-like Dify runs, or high-risk facts.
 - Meeting type: default to `多人复盘会`. Use `上市公司交流` only for a single-company special meeting. Use `专家交流` only for expert Q&A. Do not create `其他`.
-- Segmentation: organize `## 一、发言整理` by `发言人/版块`, not by one-target-per-section. Each paragraph or subsection heading must include all targets mentioned in that paragraph or subsection.
+- Output format: follow `references/output_format_guide.md` for final structure, segmentation, heading format, meeting-type differences, and ambiguity-table columns.
 - Doubtful items: non-person doubtful content must run the stable verification prompt in `references/evidence_policy.md`.
 - Validators: keep validation to encoding, Markdown/Word structure, and regression samples. Do not add content-direction validators or Subagent-output validators.
 
 ## Workflow
+
+### Choose run profile
+
+- `fast_document`: use for short, clean document-only material with clear speakers and few/no uncertain entities. Skip Subagents and ASR readiness checks. Run local formatting validators before export.
+- `standard`: use for ordinary document-only or audio-plus-document work. Batch local entity/code candidate lookup first; use Subagents only for triggered risk areas.
+- `strict_audio_or_dify`: use for audio-only, long/noisy meetings, audio/document conflicts, high-risk facts, production-like imports, or Dify workflows. Run the relevant readiness profile before the expensive step.
 
 ### 0. Prepare Inputs
 
@@ -39,7 +46,21 @@ Keep Chinese text files and generated Markdown/TXT/JSON/YAML as UTF-8 without BO
 
 ### 1. 转录
 
-When audio is provided, use `scripts/transcribe_audio.py` for local SenseVoice transcription. For production-like audio, read `references/runtime_readiness_guide.md` and run `scripts/check_investment_workflow_health.py --strict`.
+When audio is provided, use `scripts/transcribe_audio.py` for local SenseVoiceSmall transcription and timestamp-index preparation.
+
+Default audio pipeline:
+1. Run SenseVoiceSmall through local FunASR as the primary ASR transcript.
+2. Keep 60-second audio chunks and the SenseVoice text for each chunk.
+3. Run FunASR timestamp predictor (`fa-zh`) on each chunk text/audio pair to build `timestamp_index.json`.
+4. Use the timestamp index as the authoritative timestamp source for ambiguity rows.
+
+Timestamp-index rules:
+- Do not use Whisper for transcription, fallback transcription, or timestamp generation.
+- Do not re-transcribe the full audio to create timestamps. The timestamp chain should forced-align the SenseVoice chunk text against its matching audio chunk.
+- Do not run forced alignment over a full long recording in one pass. Align by 60-second chunks or shorter VAD segments.
+- `timestamp_index.json` entries must include `start`, `end`, `start_ms`, `end_ms`, `chunk_index`, `text`, `source`, and `precision`.
+- Paraformer-Large may be used as a quick auxiliary cross-check for finance terms, company names, stock codes, numbers, and English abbreviations, but it must not replace SenseVoiceSmall as the primary text.
+- Model downloads, dependency installation, and first-cache warmup are setup work, not formal transcription time. Before production-like audio, read `references/runtime_readiness_guide.md` and run `scripts/check_investment_workflow_health.py --profile asr --strict`. Use full health checks only for production-like Dify or end-to-end runtime validation.
 
 ### 2. 校对
 
@@ -57,22 +78,24 @@ Use references only when they match the uncertainty:
 
 Rules:
 - Start from meeting context before choosing a company, ticker, term, customer, supplier, number, date, or event.
-- Confirm company names and stock codes before writing them as facts. Local candidates and ASR output are clues, not proof.
-- Use `a-stock-data` live sources when available; use `scripts/query_symbol_candidates.py` only as a candidate generator.
+- Confirm company names and stock codes before writing them as facts, following `references/symbol_sources.md`. Local candidates and ASR output are clues, not proof.
+- Batch local candidate lookup before live verification when several names appear, for example `scripts/query_symbol_candidates.py --batch-file terms.txt --json`. Use `a-stock-data` live sources when available; use `scripts/query_symbol_candidates.py` only as a candidate generator.
 - If a non-person item cannot be confirmed, keep the source wording, mark the doubtful fragment, and put it in `## 二、存疑与待确认`.
+- For audio/video or timestamped transcript sources, locate each doubtful fragment against `timestamp_index.json` before writing `## 二、存疑与待确认`. Use `HH:MM:SS-HH:MM:SS` when the fragment matches a timestamped sentence or phrase. If only the chunk is known, fall back to the chunk range such as `00:03:00-00:04:00` and mark the basis as `片段级` in `核验依据` or the internal working field. If the source is text/document-only or no reliable audio anchor exists, write `未提供`.
+- Do not estimate ambiguity timestamps from the relative position of cleaned notes, summaries, or edited paragraphs.
 - Ignore pure person-name uncertainty unless it changes an investment fact or attribution.
 
 Use the Content Integrity Reviewer Subagent when target attribution, multi-target headings, high-risk facts, doubtful-item verification, or omission checks would materially reduce errors.
 
 ### 4. 编辑
 
-Write one unified draft. Use `references/default_output_template.md` and `references/output_format_guide.md`. The final note must contain reader-facing metadata, then `## 一、发言整理`, then `## 二、存疑与待确认` only when real uncertainty exists.
+Write one unified draft. Use `references/default_output_template.md` and `references/output_format_guide.md`.
 
-Preserve actual speech order and speaker perspective. If a speaker appears multiple times, keep later turns in their real position. Segment by `发言人/版块`; each paragraph or subsection heading must include all targets mentioned in that paragraph or subsection. Do not include workflow debugging fields such as `输入来源`, `整理说明`, tool names, logs, paths, review URLs, draft IDs, or draft-stage explanations.
+Preserve actual speech order and speaker perspective. If a speaker appears multiple times, keep later turns in their real position. Do not include workflow debugging fields such as `输入来源`, `整理说明`, tool names, logs, paths, review URLs, draft IDs, or draft-stage explanations.
 
 ### 5. 排版
 
-After final Markdown confirmation, validate and export:
+After final Markdown confirmation, validate and export. For temporary quality checks or before archive confirmation, use exporter dry/local options such as `--no-sync` when available; for final confirmed delivery, keep the default Markdown + Word export and background sync behavior.
 
 ```bash
 python3 scripts/validate_utf8_text.py NOTE.md --require-cjk
@@ -98,7 +121,7 @@ The exporter writes one Markdown file and one Word file. Do not generate PDF. If
 
 Core scripts:
 - `archive_raw_inputs.py`: copy current raw files into the workflow archive.
-- `transcribe_audio.py`: local SenseVoice transcription; no Whisper fallback.
+- `transcribe_audio.py`: local SenseVoiceSmall transcription plus 60-second chunk preservation and FunASR `fa-zh` timestamp-index preparation; no Whisper fallback.
 - `process_transcript.py`: transcript cleanup aid.
 - `query_symbol_candidates.py`: local symbol candidate lookup.
 - `export_to_obsidian.py` / `save_to_my_obsidian.sh`: final Markdown + Word export.
@@ -106,10 +129,6 @@ Core scripts:
 
 ## Output Contract
 
-Every final note must include:
-- Meeting metadata.
-- Meeting series metadata (`会议系列`) for grouping and downstream processing.
-- `## 一、发言整理` in actual speech order, segmented by `发言人/版块`, with headings covering all targets mentioned in each paragraph or subsection.
-- `## 二、存疑与待确认` only when real doubtful content exists.
+Every final note must follow `references/output_format_guide.md`, including metadata, speaker-order preservation, heading rules, meeting-type formatting, and ambiguity-table shape.
 
 If the user asks for optimization later, preserve this simplified structure unless they explicitly request a breaking change.
