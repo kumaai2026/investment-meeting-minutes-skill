@@ -42,7 +42,8 @@ FORBIDDEN_PATTERNS = [
 
 DOCUMENT_ONLY_SOURCE_MODES = {"document", "document-only", "text", "text-only", "文稿", "纯文本"}
 AUDIO_SOURCE_MODES = {"audio", "audio-only", "audio-text", "audio+text", "音频", "音频转写", "文稿+音频"}
-AMBIGUITY_HEADER = ["时间戳", "原始表述", "当前判断", "存疑原因", "候选项", "核验依据", "人工确认"]
+AUDIO_AMBIGUITY_HEADER = ["时间戳", "原始表述", "当前判断", "候选项", "人工确认"]
+DOCUMENT_AMBIGUITY_HEADER = ["原始表述", "当前判断", "候选项", "人工确认"]
 PLACEHOLDER_VALUES = {"", "-", "无", "暂无", "无存疑", "暂无存疑", "none", "n/a"}
 REQUIRED_WORD_TEXT = ["一、发言整理"]
 FORBIDDEN_WORD_TEXT = ["AI结构化总结", "标的汇总表", "三、处理说明", "三、标的汇总表", "四、存疑与待确认", "输入来源", "整理说明"]
@@ -187,15 +188,6 @@ def audio_timestamp_fallbacks(markdown: str) -> list[str]:
         end = min(len(markdown), match.end() + 40)
         findings.append(re.sub(r"\s+", " ", markdown[start:end]).strip())
 
-    ambiguity_match = re.search(r"## 二、存疑与待确认(?P<body>.*)$", markdown, re.S)
-    if ambiguity_match:
-        for line in ambiguity_match.group("body").splitlines():
-            stripped = line.strip()
-            if not stripped.startswith("|") or re.match(r"^\|\s*[-:]+", stripped):
-                continue
-            cells = [cell.strip() for cell in stripped.strip("|").split("|")]
-            if cells and cells[0] == "未提供":
-                findings.append(stripped)
     return findings
 
 
@@ -218,6 +210,18 @@ def normalize_source_mode(source_mode: str | None, require_audio_timestamps: boo
     if require_audio_timestamps or value in AUDIO_SOURCE_MODES:
         return "audio"
     return "auto"
+
+
+def expected_ambiguity_headers(normalized_source_mode: str) -> list[list[str]]:
+    if normalized_source_mode == "audio":
+        return [AUDIO_AMBIGUITY_HEADER]
+    if normalized_source_mode == "document":
+        return [DOCUMENT_AMBIGUITY_HEADER]
+    return [AUDIO_AMBIGUITY_HEADER, DOCUMENT_AMBIGUITY_HEADER]
+
+
+def format_allowed_headers(headers: list[list[str]]) -> str:
+    return " 或 ".join(" | ".join(header) for header in headers)
 
 
 def has_ambiguity_section(markdown: str) -> bool:
@@ -337,8 +341,9 @@ def validate_contract(
             errors.append("存疑与待确认章节存在时必须包含 Markdown 表格；无存疑内容时应省略整节")
         else:
             headers = [cell.strip() for cell in table_lines[0].strip("|").split("|")]
-            if headers != AMBIGUITY_HEADER:
-                errors.append("存疑与待确认表格表头必须固定为: 时间戳 | 原始表述 | 当前判断 | 存疑原因 | 候选项 | 核验依据 | 人工确认")
+            allowed_headers = expected_ambiguity_headers(normalized_source_mode)
+            if headers not in allowed_headers:
+                errors.append(f"存疑与待确认表格表头必须固定为: {format_allowed_headers(allowed_headers)}")
             if real_ambiguity_row_count(markdown, headers) == 0:
                 errors.append("存疑与待确认章节存在时必须包含至少一条真实存疑；无存疑内容时应省略整节")
             manual_confirmation_rows = ambiguity_rows_with_manual_confirmation(markdown, headers)
@@ -378,7 +383,7 @@ def main() -> int:
         "--source-mode",
         choices=["auto", "document", "document-only", "text", "text-only", "audio", "audio-only", "audio-text", "audio+text"],
         default="auto",
-        help="来源模式；当前表头保持一致，音频来源额外要求正文存疑词带时间戳",
+        help="来源模式；音频来源的存疑表包含时间戳列，文稿来源不显示时间戳列",
     )
     parser.add_argument("--require-audio-timestamps", action="store_true", help="音频来源不允许把存疑时间戳批量写成未提供")
     parser.add_argument("--json", action="store_true", help="输出 JSON")
