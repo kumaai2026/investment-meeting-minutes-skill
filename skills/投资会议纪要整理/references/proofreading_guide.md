@@ -1,11 +1,14 @@
-# 校对与判断规范
+# 校对与名称判断
 
-## 公司名和术语校对
+Use this file only when the transcript contains ASR noise, ambiguous names, abbreviations, company aliases, or unclear speaker names.
 
-- 先用上下文判断发言主题、行业和市场。
-- 再校对公司全称、简称、股票代码和行业术语。
-- 中文投资会议默认优先匹配 A 股；若上下文明示港股、美股或 ADR，则按语境切换。
-- 不能确认时保留原文并进入存疑表，不要强行替换。
+## Rules
+
+- Judge the topic, sector, market, and speaker intent from context first.
+- Correct obvious ASR noise only when the replacement is strongly supported by context.
+- Match company full names, aliases, tickers, abbreviations, and industry terms through `symbol_sources.md` or `evidence_policy.md` when needed.
+- Default Chinese investment meetings to A-share candidates unless the context clearly indicates HK, US, ADR, or another market.
+- If the item cannot be confirmed, keep the source wording, mark it as doubtful, and use the ambiguity table.
 
 ## 发言人处理
 

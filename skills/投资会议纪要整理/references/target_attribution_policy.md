@@ -1,13 +1,13 @@
 # Target Attribution Policy
 
-This policy defines target roles, investment actions, recommendation signals, and heading coverage for the conditional Subagent workflow. Semantic attribution comes from the Content Integrity Reviewer or human gold labels; deterministic scripts only check consistency against `analysis_ledger.json`.
+This policy defines target roles, investment actions, recommendation signals, and heading coverage for the Subagent-priority workflow. Semantic attribution comes from the Content Integrity Reviewer, the main workflow, or human review; deterministic scripts only check final-note formatting.
 
 ## Core Rules
 
 - The first-mentioned or most frequently mentioned target is not automatically the primary target or recommendation target.
 - Customers, suppliers, competitors, comparable companies, upstream/downstream entities, and background objects must not be promoted into recommendation targets without explicit source evidence.
 - Negative actions are not recommendations, but their action object must still be recorded correctly.
-- If the main discussion object and the action object differ, split the segment or include both in the heading.
+- If the main discussion object and the action object differ, include both in the heading; split only when the logic chains or actions are independent.
 - Main Orchestrator decides final segmentation and headings. Reviewers only return findings.
 
 ## Roles
@@ -94,6 +94,7 @@ and set:
 
 - `primary_target_ids` should normally be included in `heading_target_ids`.
 - `recommendation_target_ids` must be included in `heading_target_ids` unless `heading_exception_reason` is explicit and reviewable.
+- Every target mentioned in a paragraph or subsection should appear in that paragraph or subsection heading unless it is clearly incidental and not a company/security target.
 - A recommendation target should appear in the corresponding final heading.
 - A customer, supplier, or comparison target must not be the only target in a heading when a recommendation target exists.
 - `ticker_status` values other than `confirmed` must not appear as an unmarked confirmed code in the final heading.

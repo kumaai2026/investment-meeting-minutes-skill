@@ -15,9 +15,9 @@ Allowed during a live meeting job:
 
 Not allowed during a live meeting job:
 
-- Download SenseVoice, Fun-ASR-Nano, VAD, punctuation, or speaker models.
+- Download SenseVoice models.
 - Install Python packages on demand.
-- Switch from SenseVoice/FunASR to Whisper or another ASR.
+- Switch from SenseVoice to Whisper or another ASR.
 - Estimate timestamps from cleaned-note text position.
 - Pretend Word, Dify, or Google Drive sync succeeded when the step failed.
 
@@ -42,7 +42,7 @@ Strict mode should fail if required local runtime assets are missing:
 - SenseVoice transcription bridge health endpoint
 - Obsidian archive/output paths
 
-Fun-ASR-Nano remains an auxiliary comparison capability. VAD and speaker diarization are not part of the current default maintained workflow. Missing Nano/VAD/speaker caches should be reported as optional capability gaps, not as blockers for plain SenseVoice transcription.
+The maintained audio workflow is plain SenseVoice. Extra ASR comparison, segmentation, or speaker-identification paths are outside the current reusable skill contract.
 
 For a narrow ASR cache check:
 

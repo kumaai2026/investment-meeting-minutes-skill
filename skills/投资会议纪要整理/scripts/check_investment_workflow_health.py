@@ -56,16 +56,10 @@ DIFY_DOCKER_DIR = Path("/Users/kumaai/dify/docker")
 DIFY_DB_CONTAINER = "docker-db_postgres-1"
 DIFY_WORKFLOW_APP_ID = "8b8b90b1-432c-414a-842a-7426c628ae39"
 LIVE_SKILL_DIR = Path("/Users/kumaai/.codex/skills/投资会议纪要整理")
-TYPE_SKILL_NAMES = [
-    "投资会议纪要-多人复盘会",
-    "投资会议纪要-上市公司交流",
-    "投资会议纪要-专家交流",
-    "投资会议纪要-其他",
-]
 WECHAT_LAUNCH_AGENT_PATH = Path("/Users/kumaai/Library/LaunchAgents/com.kumaai.wechat-tools-bridge.plist")
 DEFAULT_ASR_RUNTIME_PYTHON = Path(
     os.environ.get(
-        "FUNASR_NANO_PYTHON",
+        "SENSEVOICE_PYTHON",
         "/Users/nananaranja/Documents/会议纪要整理/.transcribe-venv/bin/python",
     )
 )
@@ -222,19 +216,13 @@ def asr_model_cache_check(*, strict: bool) -> dict[str, Any]:
         for name, model in models.items()
         if name == "sensevoice" and isinstance(model, dict) and not model.get("complete")
     }
-    optional_incomplete = {
-        name: model
-        for name, model in models.items()
-        if name != "sensevoice" and isinstance(model, dict) and not model.get("complete")
-    }
     if returncode == 0 and not required_incomplete:
         return check(
             "ok",
             "ASR 模型缓存",
-            "纯 SenseVoice 必需模型缓存完整；Nano/VAD/说话人分离按辅助能力处理",
+            "SenseVoice 必需模型缓存完整",
             cache_root=payload.get("cache_root"),
             models=models,
-            optional_incomplete=optional_incomplete,
         )
     status = "error" if strict else "warning"
     return check(
@@ -243,7 +231,6 @@ def asr_model_cache_check(*, strict: bool) -> dict[str, Any]:
         "纯 SenseVoice 必需模型缓存不完整；运行期禁止远程查找或下载模型",
         cache_root=payload.get("cache_root"),
         incomplete=required_incomplete,
-        optional_incomplete=optional_incomplete,
         stderr=stderr.strip(),
     )
 
@@ -265,19 +252,13 @@ def sensevoice_service_model_cache_check(*, strict: bool) -> dict[str, Any]:
         for model_name, model in models.items()
         if model_name == "sensevoice" and isinstance(model, dict) and not model.get("complete")
     }
-    optional_incomplete = {
-        model_name: model
-        for model_name, model in models.items()
-        if model_name != "sensevoice" and isinstance(model, dict) and not model.get("complete")
-    }
     if payload.get("ok") is True and models and not required_incomplete:
         return check(
             "ok",
             name,
-            "服务使用的纯 SenseVoice 必需模型缓存完整；Nano/VAD/说话人分离按辅助能力处理",
+            "服务使用的 SenseVoice 必需模型缓存完整",
             cache_root=model_cache.get("cache_root"),
             python=model_cache.get("python"),
-            optional_incomplete=optional_incomplete,
         )
     status = "error" if strict else "warning"
     return check(
@@ -672,7 +653,7 @@ def dify_workflow_output_contract_check() -> dict[str, Any]:
 
 def skill_sync_checks() -> list[dict[str, Any]]:
     checks: list[dict[str, Any]] = []
-    skill_names = ["投资会议纪要整理", *TYPE_SKILL_NAMES]
+    skill_names = ["投资会议纪要整理"]
     plugin_roots = sorted(
         Path(path)
         for path in glob.glob("/Users/kumaai/dify/docker/volumes/plugin_daemon/cwd/*/skill_agent-*/skills")

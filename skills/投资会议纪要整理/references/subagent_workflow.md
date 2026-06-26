@@ -1,113 +1,75 @@
-# Conditional Subagent Workflow
+# Subagent-Priority Workflow
 
-This skill package is Skill-first and contract-first with conditional Codex Subagents. It is not a full MAS framework and does not use LangGraph, CrewAI, AutoGen, or similar orchestration layers.
+Use this file when a meeting is long, noisy, multi-speaker, multi-target, or fact-sensitive enough that a single-pass writer is likely to miss information or distort meaning.
 
-Main Orchestrator is the only writer of final Markdown, Word, archive, and sync artifacts. Subagents are read-only reviewers. Deterministic validators decide hard pass/fail status.
+The workflow is Subagent-priority with a single final writer. Subagents may produce structured intermediate material, but the main workflow is the only writer of final Markdown, Word, archive, and sync artifacts.
 
 ## Architecture
 
 ```text
-Main Orchestrator
-├─ Transcript Auditor Subagent
-├─ Content Integrity Reviewer Subagent
-│  ├─ pre_draft
-│  └─ post_draft
-├─ Main Orchestrator writes and revises the final draft
-└─ Deterministic validators
+Source material
+-> SenseVoice or provided text
+-> Subagent intermediate work when risk triggers apply
+-> Main workflow writes one unified draft
+-> Subagent omission/distortion check when needed
+-> Formatting validators and human review
+-> Export, archive, and sync
 ```
 
-## Input Flows
-
-### audio_only and audio_plus_document
-
-```text
-source material
--> ASR
--> conditional Transcript Auditor
--> existing human initial review
--> Content Integrity Reviewer pre_draft
--> Main Orchestrator writes draft
--> Content Integrity Reviewer post_draft
--> script validators
--> existing human second review
--> export, archive, and sync
-```
-
-Unconfirmed ASR output must not be used as high-confidence target-attribution input before human initial review.
-
-### document_only
-
-```text
-document text
--> existing input confirmation / human initial review
--> conditional Content Integrity Reviewer pre_draft
--> Main Orchestrator writes draft
--> Content Integrity Reviewer post_draft
--> script validators
--> human second review
--> export
-```
-
-## Trigger Rules
+## Subagent Roles
 
 ### Transcript Auditor
 
-Explicitly spawn project-scoped `transcript_auditor`, wait for its structured result, merge the result into the internal `analysis_ledger`, then continue when any condition is true:
+Use for:
 
-- `audio_only`.
-- `audio_plus_document` with audio/document conflict.
-- Speaker boundaries are unclear.
-- Key entities, stock codes, numbers, units, or technical terms are low-confidence.
-- Reliable time anchors are needed.
+- `audio_only`
+- `audio_plus_document` with audio/document conflict
+- unclear speaker boundaries
+- low-confidence company names, stock codes, numbers, units, or technical terms
+- need for reliable time anchors
 
-Use at most one Transcript Auditor thread per meeting.
+Allowed output:
 
-### Content Integrity Reviewer pre_draft
+- speaker-boundary findings
+- reliable or missing time anchors
+- low-confidence spans
+- audio/document conflict notes
+- possible entities requiring review
 
-Explicitly spawn project-scoped `content_integrity_reviewer` with `mode=pre_draft`, wait for its result, then let Main Orchestrator decide segmentation and headings when any condition is true:
+### Content Integrity Reviewer
 
-- A semantic segment contains more than one target.
-- The source contains recommendation, buy, sell, add, reduce, avoid, or other investment action.
-- Main discussion object and action object may differ.
-- Customers, suppliers, competitors, comparable companies, upstream/downstream entities, or background entities appear.
-- Orders, capacity, price, profit, revenue, gross margin, valuation, market cap, or other high-risk facts appear.
-- Meeting type is `多人复盘会`.
-- A previous version misidentified recommendation targets.
+Use before or after drafting when:
 
-Use at most one Content Integrity Reviewer thread per meeting. Do not spawn one reviewer per paragraph.
+- one semantic segment contains multiple targets
+- a source contains recommendation, buy, sell, add, reduce, avoid, or another investment action
+- main discussion object and action object may differ
+- customers, suppliers, competitors, comparable companies, upstream/downstream entities, or background entities appear
+- orders, capacity, price, profit, revenue, gross margin, valuation, market cap, or other high-risk facts appear
+- the draft may have omitted, compressed, or changed source meaning
 
-### Content Integrity Reviewer post_draft
+Allowed output:
 
-After the draft exists, formal meeting minutes should by default explicitly spawn `content_integrity_reviewer` with `mode=post_draft` and wait for findings. Only Main Orchestrator may revise the draft.
+- candidate `发言整理` blocks
+- target/company/code candidate lists
+- suggested splits and headings
+- doubtful-item verification notes using the stable prompt in `evidence_policy.md`
+- high-risk fact findings
+- omission and distortion findings
 
-Post-draft review may be skipped only for pure format conversion or when the user explicitly asks for a fast informal draft.
+## Final Writer Rule
+
+The main workflow must consolidate all useful intermediate material into one final note. Do not directly paste subagent logs, JSON, status fields, file paths, review URLs, or debug explanations into the final Markdown.
+
+Subagent output should improve coverage and accuracy, not create a second final-note format.
 
 ## Failure And Fallback
 
-If a subagent spawn fails, times out, or returns invalid JSON:
+If a subagent is unavailable, times out, or returns unusable output:
 
 - Do not claim the review passed.
-- Low-risk tasks may fall back to single-agent processing.
-- High-risk tasks set `requires_human_review=true`.
-- Existing human confirmation gates are not skipped.
-- Record failure in the internal QA report.
+- Continue with single-writer processing only when the source risk is acceptable.
+- Keep existing human confirmation gates.
+- Preserve unresolved high-risk issues in `## 二、存疑与待确认` or report that human review is required.
 - Do not write failure details into the final note body.
 
 See `subagent_failure_policy.md`.
-
-## Dify Boundary
-
-Dify remains an adapter for upload, extraction/transcription, human gates, type-skill invocation, archive confirmation, and sync.
-
-Dify subagent execution is unverified; existing single-agent fallback remains authoritative.
-
-Dify status values are limited to `PASS`, `FAIL`, and `UNVERIFIED`.
-
-## Internal Artifacts
-
-Only two internal artifacts are authoritative:
-
-- `analysis_ledger.json`
-- `qa_report.json`
-
-They belong under `.meeting-minutes-internal/` or another explicitly internal directory and must not enter final Markdown, Word, Dify knowledge base, Google Drive sync output, or sanitized RAG output.

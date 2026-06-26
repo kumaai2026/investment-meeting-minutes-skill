@@ -41,15 +41,6 @@
       "source_mode": "document",
       "file": "expert_call.md",
       "required_terms": ["专家交流", "问答线索", "中芯国际"]
-    },
-    {
-      "name": "条件式 Subagent analysis ledger 样例",
-      "mode": "subagent_analysis_ledger",
-      "source_mode": "document",
-      "file": "subagent/subagent_positive.md",
-      "analysis_ledger": "subagent/subagent_positive_analysis_ledger.json",
-      "qa_report": "subagent/subagent_positive_qa_report.json",
-      "required_terms": ["B公司是明确推荐对象", "客户X只是客户", "O公司代码只有候选"]
     }
   ]
 }

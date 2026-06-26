@@ -15,8 +15,6 @@ DEFAULT_CASES_PATH = SKILL_DIR / "references/regression_samples/cases.json"
 
 sys.path.insert(0, str(SCRIPT_DIR))
 from validate_meeting_minutes_contract import validate_contract  # noqa: E402
-from validate_analysis_ledger import validate_ledger, load_json  # noqa: E402
-from validate_title_target_consistency import validate as validate_title_target  # noqa: E402
 
 
 def read_cases(path: Path) -> list[dict[str, Any]]:
@@ -42,31 +40,6 @@ def run_case(case: dict[str, Any], base_dir: Path) -> dict[str, Any]:
         "file": str(file_path),
         **result,
     }
-    ledger_ref = case.get("analysis_ledger")
-    if ledger_ref:
-        ledger_path = base_dir / str(ledger_ref)
-        qa_payload = None
-        qa_ref = case.get("qa_report")
-        if qa_ref:
-            qa_payload, qa_errors, qa_operational = load_json(base_dir / str(qa_ref))
-            if qa_operational:
-                result["ok"] = False
-                result.setdefault("errors", []).extend(qa_errors)
-                return result
-        ledger_payload, ledger_errors, ledger_operational = load_json(ledger_path)
-        if ledger_operational or not isinstance(ledger_payload, dict):
-            result["ok"] = False
-            result.setdefault("errors", []).extend(ledger_errors or [f"{ledger_path}: ledger top-level must be object"])
-            return result
-        ledger_result = validate_ledger(ledger_payload, qa_payload if isinstance(qa_payload, dict) else None)
-        title_result = validate_title_target(file_path, ledger_path)
-        result["analysis_ledger"] = {"file": str(ledger_path), **ledger_result}
-        result["title_target_consistency"] = title_result
-        result["ok"] = bool(result["ok"] and ledger_result["ok"] and title_result["ok"])
-        result.setdefault("errors", []).extend(f"analysis_ledger: {error}" for error in ledger_result["errors"])
-        result.setdefault("errors", []).extend(f"title_target: {error}" for error in title_result["errors"])
-        result.setdefault("warnings", []).extend(f"analysis_ledger: {warning}" for warning in ledger_result["warnings"])
-        result.setdefault("warnings", []).extend(f"title_target: {warning}" for warning in title_result["warnings"])
     return result
 
 
