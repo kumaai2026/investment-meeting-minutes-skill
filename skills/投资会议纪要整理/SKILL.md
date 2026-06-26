@@ -46,21 +46,27 @@ Keep Chinese text files and generated Markdown/TXT/JSON/YAML as UTF-8 without BO
 
 ### 1. 转录
 
-When audio is provided, use `scripts/transcribe_audio.py` for local SenseVoiceSmall transcription and timestamp-index preparation.
+When audio is provided, use `scripts/transcribe_audio.py` for local SenseVoiceSmall primary transcription, Paraformer-Large auxiliary cross-checking, and timestamp-index preparation.
 
 Default audio pipeline:
 1. Run SenseVoiceSmall through local FunASR as the primary ASR transcript.
-2. Keep 60-second audio chunks and the SenseVoice text for each chunk.
-3. Run FunASR timestamp predictor (`fa-zh`) on each chunk text/audio pair to build `timestamp_index.json`.
-4. Use the timestamp index as the authoritative timestamp source for ambiguity rows.
+2. Keep 60-second audio chunks, chunk paths, and the SenseVoice text for each chunk.
+3. Run Paraformer-Large on the same chunks as an auxiliary ASR cross-check for finance terms, company names, stock codes, numbers, and English abbreviations.
+4. Do not automatically replace the SenseVoiceSmall transcript with Paraformer-Large output. Use Paraformer differences as proofreading evidence, and surface unresolved conflicts in `transcript_audit` or `suspect_confirmation`.
+5. Build a near-verbatim `aligned_transcript` from the SenseVoice primary transcript plus confirmed cross-check corrections. Do not use cleaned meeting-note prose for timestamp alignment.
+6. Run FunASR/fa-zh timestamp forced alignment on each chunk audio + matching `aligned_transcript` or SenseVoice chunk text to build `timestamp_index.json`.
+7. Use the timestamp index as the authoritative timestamp source for ambiguity rows.
 
 Timestamp-index rules:
-- Do not use Whisper for transcription, fallback transcription, or timestamp generation.
-- Do not re-transcribe the full audio to create timestamps. The timestamp chain should forced-align the SenseVoice chunk text against its matching audio chunk.
+- Do not use Whisper for transcription, fallback transcription, cross-checking, or timestamp generation.
+- Do not re-transcribe the full audio only to create timestamps. Paraformer-Large may be used for auxiliary text cross-checking, but the timestamp chain should forced-align the primary or corrected near-verbatim chunk text against its matching audio chunk.
 - Do not run forced alignment over a full long recording in one pass. Align by 60-second chunks or shorter VAD segments.
 - `timestamp_index.json` entries must include `start`, `end`, `start_ms`, `end_ms`, `chunk_index`, `text`, `source`, and `precision`.
-- Paraformer-Large may be used as a quick auxiliary cross-check for finance terms, company names, stock codes, numbers, and English abbreviations, but it must not replace SenseVoiceSmall as the primary text.
-- Model downloads, dependency installation, and first-cache warmup are setup work, not formal transcription time. Before production-like audio, read `references/runtime_readiness_guide.md` and run `scripts/check_investment_workflow_health.py --profile asr --strict`. Use full health checks only for production-like Dify or end-to-end runtime validation.
+- `source` should distinguish `sensevoice`, `sensevoice_paraformer_checked`, `fa_zh_forced_alignment`, and fallback segment sources when applicable.
+- `precision` should distinguish `sentence`, `phrase`, `segment`, `chunk`, and `unavailable`.
+- For ambiguity rows, first match the doubtful term to the timestamp index and output `HH:MM:SS-HH:MM:SS`. If no sentence/phrase match is available, fall back to the VAD or chunk range and mark it as `片段级`.
+- Model downloads, dependency installation, and first-cache warmup are setup work, not formal transcription time.
+- Before production-like audio, read `references/runtime_readiness_guide.md` and run `scripts/check_investment_workflow_health.py --profile asr --strict` if that profile is implemented. If not implemented, use the existing strict health check or `scripts/transcribe_audio.py --check-model-cache`. Use full health checks only for production-like Dify or end-to-end runtime validation.
 
 ### 2. 校对
 
