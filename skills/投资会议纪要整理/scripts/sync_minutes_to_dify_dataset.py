@@ -237,7 +237,7 @@ def build_metadata(
     resolved_title = resolve_document_title(raw_title, markdown_path, source_file)
     resolved_date = normalize_date(meeting_date or markdown_field(markdown, "会议日期"))
     resolved_title = disambiguate_generic_title(resolved_title, resolved_date, markdown_path, source_file)
-    resolved_type = meeting_type or markdown_field(markdown, "会议类型", "其他")
+    resolved_type = meeting_type or markdown_field(markdown, "会议类型", "多人复盘会")
     resolved_series = meeting_series or markdown_field(markdown, "会议系列", "未分组")
     input_source = markdown_field(markdown, "输入来源", "未注明")
     document_name = sanitize_document_name(f"{resolved_date} - {resolved_title}")

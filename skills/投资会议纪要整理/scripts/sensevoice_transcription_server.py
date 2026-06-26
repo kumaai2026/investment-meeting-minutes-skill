@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""Tiny local HTTP bridge for Dify -> SenseVoice transcription with optional Nano cross-check."""
+"""Tiny local HTTP bridge for Dify -> SenseVoice transcription."""
 
 from __future__ import annotations
 
-import difflib
 import io
 import json
 import os
@@ -22,29 +21,18 @@ TRANSCRIBE_SCRIPT = SCRIPT_DIR / "transcribe_audio.py"
 LOG_DIR = Path("/Users/kumaai/Library/Logs/kumaai-sync")
 DEFAULT_PRIMARY_ENGINE = "sensevoice"
 DEFAULT_PRIMARY_MODEL = "iic/SenseVoiceSmall"
-DEFAULT_AUX_ENGINE = os.environ.get("SENSEVOICE_BRIDGE_AUX_ENGINE", "").strip().lower()
-DEFAULT_NANO_MODEL = "FunAudioLLM/Fun-ASR-Nano-2512"
-DEFAULT_NANO_HUB = os.environ.get("FUNASR_NANO_HUB", "ms")
 DEFAULT_MODEL_CACHE = os.environ.get(
-    "FUNASR_MODEL_CACHE",
-    "/Users/nananaranja/Documents/Codex/asr-model-cache",
+    "SENSEVOICE_MODEL_CACHE",
+    os.environ.get(
+        "FUNASR_MODEL_CACHE",
+        "/Users/nananaranja/Documents/Codex/asr-model-cache",
+    ),
 )
-DEFAULT_NANO_PYTHON = os.environ.get(
-    "FUNASR_NANO_PYTHON",
-    "/Users/nananaranja/Documents/会议纪要整理/.transcribe-venv/bin/python",
-)
-DEFAULT_HOTWORDS = (
-    "半导体,算力,AI眼镜,液冷,CPO,PCB,光模块,光芯片,东田微,依米康,"
-    "信测标准,中芯国际,中微公司,工业富联,北方华创,中际旭创,胜蓝股份"
-)
+DEFAULT_TRANSCRIBE_PYTHON = os.environ.get("SENSEVOICE_PYTHON", "")
 
 LOG_DIR = Path(os.environ.get("KUMAAI_SYNC_LOG_DIR", str(Path.home() / "Library/Logs/kumaai-sync")))
 MODEL_REQUIREMENTS = {
     "sensevoice": ("iic/SenseVoiceSmall", ("config.yaml", "model.pt")),
-    "vad": ("iic/speech_fsmn_vad_zh-cn-16k-common-pytorch", ("config.yaml", "model.pt")),
-    "punc": ("iic/punc_ct-transformer_cn-en-common-vocab471067-large", ("config.yaml", "model.pt")),
-    "speaker_diarization": ("iic/speech_campplus_sv_zh-cn_16k-common", ("config.yaml", "campplus_cn_common.bin")),
-    "fun_asr_nano": ("FunAudioLLM/Fun-ASR-Nano-2512", ("configuration.json",)),
 }
 
 
@@ -135,7 +123,7 @@ def _model_cache_status() -> dict:
             "missing": missing,
             "checked_paths": [str(item) for item in candidates],
         }
-    return {"cache_root": str(root), "python": DEFAULT_NANO_PYTHON, "models": models}
+    return {"cache_root": str(root), "python": DEFAULT_TRANSCRIBE_PYTHON, "models": models}
 
 
 def _json_response(handler: BaseHTTPRequestHandler, status: int, payload: dict) -> None:
@@ -185,6 +173,7 @@ def _run_transcribe(command: list[str], output_dir: Path, stem: str, timeout: in
     env = dict(os.environ)
     env.setdefault("PYTHONUTF8", "1")
     env.setdefault("PYTHONIOENCODING", "utf-8")
+    env.setdefault("SENSEVOICE_MODEL_CACHE", DEFAULT_MODEL_CACHE)
     env.setdefault("FUNASR_MODEL_CACHE", DEFAULT_MODEL_CACHE)
     env.setdefault("MODELSCOPE_CACHE", str(Path(DEFAULT_MODEL_CACHE).expanduser() / "modelscope"))
     env.setdefault("HF_HOME", str(Path(DEFAULT_MODEL_CACHE).expanduser() / "huggingface"))
@@ -194,35 +183,6 @@ def _run_transcribe(command: list[str], output_dir: Path, stem: str, timeout: in
     if completed.returncode != 0:
         error = (completed.stderr or completed.stdout or "transcription failed").strip()
     return completed.returncode == 0, text, error
-
-
-def _diff_summary(primary_text: str, auxiliary_text: str, limit: int = 5000) -> str:
-    if not primary_text or not auxiliary_text:
-        return ""
-    diff = difflib.unified_diff(
-        primary_text.splitlines() or [primary_text],
-        auxiliary_text.splitlines() or [auxiliary_text],
-        fromfile="sensevoice",
-        tofile="fun-asr-nano",
-        lineterm="",
-    )
-    chunks: list[str] = []
-    total = 0
-    truncated = False
-    for line in diff:
-        line_length = len(line) + 1
-        if total + line_length > limit:
-            remaining = max(limit - total, 0)
-            if remaining:
-                chunks.append(line[:remaining].rstrip())
-            truncated = True
-            break
-        chunks.append(line)
-        total += line_length
-    text = "\n".join(chunks).strip()
-    if truncated:
-        text = text.rstrip() + "\n...（差异过长，已截断）"
-    return text
 
 
 class SenseVoiceHandler(BaseHTTPRequestHandler):
@@ -244,8 +204,6 @@ class SenseVoiceHandler(BaseHTTPRequestHandler):
                     "model": DEFAULT_PRIMARY_MODEL,
                     "primary_engine": DEFAULT_PRIMARY_ENGINE,
                     "primary_model": DEFAULT_PRIMARY_MODEL,
-                    "auxiliary_engine": DEFAULT_AUX_ENGINE,
-                    "auxiliary_model": DEFAULT_NANO_MODEL if DEFAULT_AUX_ENGINE == "fun-asr-nano" else "",
                     "model_cache": _model_cache_status(),
                 },
             )
@@ -274,8 +232,6 @@ class SenseVoiceHandler(BaseHTTPRequestHandler):
 
         filename = _clean_filename(file_item.filename)
         suffix = Path(filename).suffix or ".audio"
-        aux_engine = _field_text(form, "aux_engine", DEFAULT_AUX_ENGINE).lower()
-        hotwords = _field_text(form, "hotwords", DEFAULT_HOTWORDS)
         with tempfile.TemporaryDirectory(prefix="sensevoice-dify-") as tmp:
             tmp_dir = Path(tmp)
             audio_path = tmp_dir / f"input{suffix}"
@@ -286,7 +242,9 @@ class SenseVoiceHandler(BaseHTTPRequestHandler):
             auxiliary_dir.mkdir()
 
             command = [
-                DEFAULT_NANO_PYTHON if Path(DEFAULT_NANO_PYTHON).exists() else sys.executable,
+                DEFAULT_TRANSCRIBE_PYTHON
+                if DEFAULT_TRANSCRIBE_PYTHON and Path(DEFAULT_TRANSCRIBE_PYTHON).exists()
+                else sys.executable,
                 str(TRANSCRIBE_SCRIPT),
                 str(audio_path),
                 "--engine",
@@ -312,8 +270,6 @@ class SenseVoiceHandler(BaseHTTPRequestHandler):
                 "primary_model": DEFAULT_PRIMARY_MODEL,
                 "filename": filename,
                 "text": text,
-                "speaker_diarization_enabled": bool(primary_json.get("speaker_diarization_enabled")),
-                "speaker_diarization_detected": bool(primary_json.get("speaker_diarization_detected")),
                 "timestamp_detected": bool(primary_json.get("timestamp_detected")),
                 "speakers": primary_json.get("speakers") or [],
                 "speaker_segments": speaker_segments,
@@ -324,49 +280,6 @@ class SenseVoiceHandler(BaseHTTPRequestHandler):
                 payload["error"] = primary_error or "SenseVoice transcription failed"
                 _json_response(self, 500, payload)
                 return
-
-            if aux_engine in {"fun-asr-nano", "nano", "funasr-nano"}:
-                auxiliary_command = [
-                    DEFAULT_NANO_PYTHON if Path(DEFAULT_NANO_PYTHON).exists() else sys.executable,
-                    str(TRANSCRIBE_SCRIPT),
-                    str(audio_path),
-                    "--engine",
-                    "fun-asr-nano",
-                    "--output-dir",
-                    str(auxiliary_dir),
-                    "--output-format",
-                    "txt",
-                    "--language",
-                    "中文",
-                    "--nano-model",
-                    DEFAULT_NANO_MODEL,
-                    "--nano-hub",
-                    DEFAULT_NANO_HUB,
-                    "--hotwords",
-                    hotwords,
-                ]
-                if DEFAULT_MODEL_CACHE:
-                    auxiliary_command.extend(["--cache-dir", DEFAULT_MODEL_CACHE])
-                auxiliary_ok, auxiliary_text, auxiliary_error = _run_transcribe(auxiliary_command, auxiliary_dir, "input")
-                payload.update(
-                    {
-                        "auxiliary_engine": "fun-asr-nano",
-                        "auxiliary_model": DEFAULT_NANO_MODEL,
-                        "auxiliary_ok": auxiliary_ok,
-                        "auxiliary_text": auxiliary_text,
-                        "auxiliary_status": "Fun-ASR-Nano 转录成功" if auxiliary_ok else f"Fun-ASR-Nano 转录失败：{auxiliary_error[:300]}",
-                        "asr_comparison_diff": _diff_summary(text, auxiliary_text),
-                        "auxiliary_transcripts": {
-                            "fun_asr_nano": {
-                                "ok": auxiliary_ok,
-                                "model": DEFAULT_NANO_MODEL,
-                                "hub": DEFAULT_NANO_HUB,
-                                "text": auxiliary_text,
-                                "error": auxiliary_error,
-                            }
-                        },
-                    }
-                )
             _json_response(self, 200, payload)
 
 

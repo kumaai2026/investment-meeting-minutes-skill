@@ -34,12 +34,13 @@ def run_case(case: dict[str, Any], base_dir: Path) -> dict[str, Any]:
         source_mode=str(case.get("source_mode") or case.get("mode") or "auto"),
         require_audio_timestamps=bool(case.get("require_audio_timestamps")),
     )
-    return {
+    result = {
         "name": case.get("name") or file_path.stem,
         "mode": case.get("mode") or "",
         "file": str(file_path),
         **result,
     }
+    return result
 
 
 def print_text(results: list[dict[str, Any]]) -> None:

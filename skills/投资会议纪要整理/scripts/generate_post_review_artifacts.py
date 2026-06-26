@@ -39,7 +39,7 @@ def number_tokens(text: str) -> list[str]:
 
 
 def split_final_note(markdown: str) -> list[dict[str, Any]]:
-    body_start = markdown.find("## 一、逐发言人原文整理")
+    body_start = markdown.find("## 一、发言整理")
     doubt_start = markdown.find("## 二、存疑与待确认")
     body = markdown[body_start:doubt_start if doubt_start >= 0 else len(markdown)] if body_start >= 0 else markdown
     segments: list[dict[str, Any]] = []
@@ -198,7 +198,7 @@ def generate_artifacts(
         "metadata": {
             "title": markdown_title(markdown, path.stem),
             "meeting_date": markdown_field(markdown, "会议日期", ""),
-            "meeting_type": markdown_field(markdown, "会议类型", "其他"),
+            "meeting_type": markdown_field(markdown, "会议类型", "多人复盘会"),
             "source_path": str(path),
             "source_hash": source_hash(markdown),
             "generated_at": generated_at,

@@ -15,21 +15,31 @@ Allowed during a live meeting job:
 
 Not allowed during a live meeting job:
 
-- Download SenseVoice, Fun-ASR-Nano, VAD, punctuation, or speaker models.
+- Download SenseVoice models.
 - Install Python packages on demand.
-- Switch from SenseVoice/FunASR to Whisper or another ASR.
+- Switch from SenseVoice to Whisper or another ASR.
 - Estimate timestamps from cleaned-note text position.
 - Pretend Word, Dify, or Google Drive sync succeeded when the step failed.
 
-## Strict Check
+## Readiness Profiles
 
-Run this before production-like use:
+Use the narrowest readiness profile that matches the next expensive step:
 
 ```bash
-python3 scripts/check_investment_workflow_health.py --strict
+python3 scripts/check_investment_workflow_health.py --profile asr --strict
+python3 scripts/check_investment_workflow_health.py --profile export
+python3 scripts/check_investment_workflow_health.py --profile dify
+python3 scripts/check_investment_workflow_health.py --profile full --strict
 ```
 
-Strict mode should fail if required local runtime assets are missing:
+Profile intent:
+
+- `asr`: check only local transcription prerequisites and the SenseVoice service/cache. Use before audio transcription.
+- `export`: check local archive/export paths, Word dependency, and rclone availability/log status. Use before final Markdown + Word export.
+- `dify`: check Dify, review/export bridges, workflow output contract, sync mapping, and access-control plumbing. Use before production-like Dify imports.
+- `full`: run the broad machine health audit. Use for deployment validation, not for every meeting note.
+
+Strict ASR/full mode should fail if required local runtime assets are missing:
 
 - `funasr`
 - `modelscope`
@@ -42,7 +52,7 @@ Strict mode should fail if required local runtime assets are missing:
 - SenseVoice transcription bridge health endpoint
 - Obsidian archive/output paths
 
-Fun-ASR-Nano remains an auxiliary comparison capability. VAD and speaker diarization are not part of the current default maintained workflow. Missing Nano/VAD/speaker caches should be reported as optional capability gaps, not as blockers for plain SenseVoice transcription.
+The maintained audio workflow is plain SenseVoice. Extra ASR comparison, segmentation, or speaker-identification paths are outside the current reusable skill contract.
 
 For a narrow ASR cache check:
 
