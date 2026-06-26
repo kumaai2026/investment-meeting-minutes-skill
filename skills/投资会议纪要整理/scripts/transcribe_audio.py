@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""High-quality local transcription wrapper for SenseVoice and Fun-ASR-Nano."""
+"""High-quality local transcription wrapper for SenseVoice."""
 
 from __future__ import annotations
 
@@ -14,32 +14,27 @@ import tempfile
 from pathlib import Path
 
 DEFAULT_SENSEVOICE_MODEL = "iic/SenseVoiceSmall"
-DEFAULT_FUNASR_NANO_MODEL = "FunAudioLLM/Fun-ASR-Nano-2512"
-DEFAULT_FUNASR_NANO_HUB = "ms"
 DEFAULT_LOCAL_CACHE = Path("/Users/nananaranja/Documents/Codex/asr-model-cache")
 MODEL_ALIASES = {
     "iic/SenseVoiceSmall": ("modelscope", "models/iic/SenseVoiceSmall"),
     "SenseVoiceSmall": ("modelscope", "models/iic/SenseVoiceSmall"),
-    "fsmn-vad": ("modelscope", "models/iic/speech_fsmn_vad_zh-cn-16k-common-pytorch"),
-    "ct-punc": ("modelscope", "models/iic/punc_ct-transformer_cn-en-common-vocab471067-large"),
-    "cam++": ("modelscope", "models/iic/speech_campplus_sv_zh-cn_16k-common"),
-    "FunAudioLLM/Fun-ASR-Nano-2512": ("modelscope", "models/FunAudioLLM/Fun-ASR-Nano-2512"),
 }
 REQUIRED_MODEL_FILES = {
     "iic/SenseVoiceSmall": ("config.yaml", "model.pt"),
     "SenseVoiceSmall": ("config.yaml", "model.pt"),
-    "fsmn-vad": ("config.yaml", "model.pt"),
-    "ct-punc": ("config.yaml", "model.pt"),
-    "cam++": ("config.yaml", "campplus_cn_common.bin"),
-    "FunAudioLLM/Fun-ASR-Nano-2512": ("configuration.json",),
 }
 SENSEVOICE_TEXT_FORMATS = {"txt", "json", "all"}
-FUNASR_NANO_TEXT_FORMATS = {"txt", "json", "all"}
 
 
 def _configure_model_cache(cache_dir: str) -> None:
-    cache_value = (cache_dir or os.environ.get("FUNASR_MODEL_CACHE") or str(DEFAULT_LOCAL_CACHE)).strip()
+    cache_value = (
+        cache_dir
+        or os.environ.get("SENSEVOICE_MODEL_CACHE")
+        or os.environ.get("FUNASR_MODEL_CACHE")
+        or str(DEFAULT_LOCAL_CACHE)
+    ).strip()
     root = Path(cache_value).expanduser().resolve()
+    os.environ.setdefault("SENSEVOICE_MODEL_CACHE", str(root))
     os.environ.setdefault("FUNASR_MODEL_CACHE", str(root))
     os.environ.setdefault("MODELSCOPE_CACHE", str(root / "modelscope"))
     os.environ.setdefault("HF_HOME", str(root / "huggingface"))
@@ -47,6 +42,7 @@ def _configure_model_cache(cache_dir: str) -> None:
 
 def _model_cache_root() -> Path | None:
     candidates = [
+        os.environ.get("SENSEVOICE_MODEL_CACHE"),
         os.environ.get("FUNASR_MODEL_CACHE"),
         os.environ.get("MODELSCOPE_CACHE"),
         DEFAULT_LOCAL_CACHE,
@@ -119,13 +115,7 @@ def _model_cache_status(model_name: str) -> dict[str, object]:
 def _model_cache_report() -> dict[str, object]:
     return {
         "cache_root": str(_model_cache_root() or ""),
-        "models": {
-            "sensevoice": _model_cache_status(DEFAULT_SENSEVOICE_MODEL),
-            "vad": _model_cache_status("fsmn-vad"),
-            "punc": _model_cache_status("ct-punc"),
-            "speaker_diarization": _model_cache_status("cam++"),
-            "fun_asr_nano": _model_cache_status(DEFAULT_FUNASR_NANO_MODEL),
-        },
+        "models": {"sensevoice": _model_cache_status(DEFAULT_SENSEVOICE_MODEL)},
     }
 
 
@@ -164,7 +154,7 @@ def _clean_sensevoice_text(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
-def _extract_funasr_text(result: object) -> str:
+def _extract_model_text(result: object) -> str:
     chunks = result if isinstance(result, list) else [result]
     texts: list[str] = []
     for chunk in chunks:
@@ -350,15 +340,12 @@ def _run_sensevoice(
     model_name: str,
     language: str,
     output_format: str,
-    speaker_diarization: bool,
-    require_speaker_diarization: bool,
-    use_vad: bool,
     allow_remote_model_lookup: bool,
     include_raw_json: bool,
 ) -> int:
     if output_format not in SENSEVOICE_TEXT_FORMATS:
         print(
-            "SenseVoice/FunASR 当前只允许输出 txt/json/all；禁止降级为 Whisper 生成字幕格式。",
+            "SenseVoice 当前只允许输出 txt/json/all；禁止降级为 Whisper 生成字幕格式。",
             file=sys.stderr,
         )
         return 2
@@ -368,23 +355,8 @@ def _run_sensevoice(
     try:
         from funasr import AutoModel  # type: ignore
     except Exception as exc:
-        print(f"缺少 SenseVoice/FunASR 依赖: {exc}", file=sys.stderr)
+        print(f"缺少 SenseVoice 运行依赖: {exc}", file=sys.stderr)
         return 127
-
-    spk_cache_status = _model_cache_status("cam++")
-    use_speaker_diarization = speaker_diarization and bool(spk_cache_status.get("complete"))
-    if speaker_diarization and not spk_cache_status.get("complete"):
-        if require_speaker_diarization:
-            print(
-                f"SenseVoice 说话人分离模型 cam++ 本地缓存不完整，缺少 {spk_cache_status.get('missing')}。",
-                file=sys.stderr,
-            )
-            return 1
-        print(
-            "SenseVoice 说话人分离模型 cam++ 本地缓存不完整，"
-            f"缺少 {spk_cache_status.get('missing')}；已跳过远程查找并改为纯 SenseVoice 转录。",
-            file=sys.stderr,
-        )
 
     base_model_kwargs: dict[str, object] = {
         "model": _resolve_model_ref(model_name, allow_remote_model_lookup=allow_remote_model_lookup),
@@ -392,43 +364,15 @@ def _run_sensevoice(
         "device": _select_device("auto"),
         "disable_update": True,
     }
-    if use_vad or use_speaker_diarization:
-        base_model_kwargs.update(
-            {
-                "vad_model": _resolve_model_ref("fsmn-vad", allow_remote_model_lookup=allow_remote_model_lookup),
-                "vad_kwargs": {"max_single_segment_time": 30000},
-            }
-        )
-    if use_speaker_diarization:
-        base_model_kwargs["punc_model"] = _resolve_model_ref(
-            "ct-punc", allow_remote_model_lookup=allow_remote_model_lookup
-        )
-    diarization_enabled = False
     try:
-        model_kwargs = dict(base_model_kwargs)
-        if use_speaker_diarization:
-            model_kwargs.update(
-                {"spk_model": _resolve_model_ref("cam++", allow_remote_model_lookup=allow_remote_model_lookup)}
-            )
-        model = AutoModel(**model_kwargs)
-        diarization_enabled = use_speaker_diarization
+        model = AutoModel(**base_model_kwargs)
     except (RuntimeError, TypeError, ValueError) as exc:
-        if require_speaker_diarization:
+        if model_name == DEFAULT_SENSEVOICE_MODEL and "not registered" in str(exc):
+            fallback_kwargs = dict(base_model_kwargs)
+            fallback_kwargs["model"] = "SenseVoiceSmall"
+            model = AutoModel(**fallback_kwargs)
+        else:
             raise
-        if speaker_diarization:
-            print(
-                f"SenseVoice 说话人分离不可用，改为纯 SenseVoice 转录: {exc}",
-                file=sys.stderr,
-            )
-        try:
-            model = AutoModel(**base_model_kwargs)
-        except RuntimeError as fallback_exc:
-            if model_name == DEFAULT_SENSEVOICE_MODEL and "not registered" in str(fallback_exc):
-                fallback_kwargs = dict(base_model_kwargs)
-                fallback_kwargs["model"] = "SenseVoiceSmall"
-                model = AutoModel(**fallback_kwargs)
-            else:
-                raise
 
     generate_kwargs: dict[str, object] = {
         "input": str(input_file),
@@ -437,23 +381,10 @@ def _run_sensevoice(
         "batch_size_s": 60,
         "sentence_timestamp": True,
     }
-    if use_vad or use_speaker_diarization:
-        generate_kwargs.update({"merge_vad": True, "merge_length_s": 15})
-    try:
-        result = model.generate(**generate_kwargs)
-    except Exception as exc:
-        if require_speaker_diarization or not speaker_diarization:
-            raise
-        print(
-            f"SenseVoice 说话人分离生成失败，改为纯 SenseVoice 转录: {exc}",
-            file=sys.stderr,
-        )
-        model = AutoModel(**base_model_kwargs)
-        diarization_enabled = False
-        result = model.generate(**generate_kwargs)
+    result = model.generate(**generate_kwargs)
 
     speaker_sentences = _extract_sentence_info(result)
-    output_text = _format_speaker_transcript(speaker_sentences) or _extract_funasr_text(result)
+    output_text = _format_speaker_transcript(speaker_sentences) or _extract_model_text(result)
     stem = input_file.stem
     if output_format in {"txt", "all"}:
         (output_dir / f"{stem}.txt").write_text(output_text + "\n", encoding="utf-8")
@@ -465,13 +396,7 @@ def _run_sensevoice(
             "input": str(input_file),
             "text": output_text,
             "model_cache": _model_cache_report(),
-            "speaker_diarization_requested": speaker_diarization,
-            "speaker_diarization_enabled": diarization_enabled,
-            "sensevoice_vad_enabled": use_vad,
             "timestamp_detected": bool(speaker_sentences),
-            "speaker_diarization_detected": bool(
-                diarization_enabled and any(item.get("speaker") for item in speaker_sentences)
-            ),
             "speakers": sorted({str(item.get("speaker")) for item in speaker_sentences if item.get("speaker")}),
             "sentence_info": speaker_sentences,
         }
@@ -486,89 +411,8 @@ def _run_sensevoice(
     return 0
 
 
-def _run_funasr_nano(
-    input_file: Path,
-    output_dir: Path,
-    model_name: str,
-    hub: str,
-    language: str,
-    output_format: str,
-    hotwords: str,
-    device: str,
-    use_vad: bool,
-    allow_remote_model_lookup: bool,
-    include_raw_json: bool,
-) -> int:
-    if output_format not in FUNASR_NANO_TEXT_FORMATS:
-        print(
-            "Fun-ASR-Nano 当前只允许输出 txt/json/all；禁止降级为 Whisper 生成字幕格式。",
-            file=sys.stderr,
-        )
-        return 2
-
-    _ensure_ffmpeg_for_current_process()
-
-    try:
-        from funasr import AutoModel  # type: ignore
-    except Exception as exc:
-        print(f"缺少 Fun-ASR-Nano 依赖: {exc}", file=sys.stderr)
-        return 127
-
-    resolved_device = _select_device(device)
-    model_kwargs: dict[str, object] = {
-        "model": _resolve_model_ref(model_name, allow_remote_model_lookup=allow_remote_model_lookup),
-        "trust_remote_code": True,
-        "device": resolved_device,
-        "hub": hub,
-        "disable_update": True,
-    }
-    if use_vad:
-        model_kwargs.update(
-            {
-                "vad_model": _resolve_model_ref("fsmn-vad", allow_remote_model_lookup=allow_remote_model_lookup),
-                "vad_kwargs": {"max_single_segment_time": 30000},
-            }
-        )
-
-    model = AutoModel(**model_kwargs)
-    hotword_list = [item.strip() for item in hotwords.split(",") if item.strip()]
-    result = model.generate(
-        input=[str(input_file)],
-        cache={},
-        batch_size=1,
-        language=language,
-        hotwords=hotword_list,
-        itn=True,
-    )
-
-    output_text = _extract_funasr_text(result)
-    stem = input_file.stem
-    if output_format in {"txt", "all"}:
-        (output_dir / f"{stem}.txt").write_text(output_text + "\n", encoding="utf-8")
-    if output_format in {"json", "all"}:
-        payload = {
-            "engine": "fun-asr-nano",
-            "model": model_name,
-            "hub": hub,
-            "language": language,
-            "device": resolved_device,
-            "hotwords": hotword_list,
-            "input": str(input_file),
-            "text": output_text,
-        }
-        if include_raw_json:
-            payload["raw"] = result
-        (output_dir / f"{stem}.json").write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2, default=str),
-            encoding="utf-8",
-        )
-
-    print(f"Fun-ASR-Nano 转录完成: {output_dir / f'{stem}.txt'}")
-    return 0
-
-
 def main() -> int:
-    parser = argparse.ArgumentParser(description="使用本地 SenseVoice/FunASR 转录音频；禁止降级为 Whisper")
+    parser = argparse.ArgumentParser(description="使用本地 SenseVoice 转录音频；禁止降级为 Whisper")
     parser.add_argument("input_file", nargs="?", help="音频文件路径")
     parser.add_argument(
         "--output-dir",
@@ -578,64 +422,18 @@ def main() -> int:
     parser.add_argument(
         "--engine",
         default="auto",
-        choices=["auto", "sensevoice", "fun-asr-nano"],
-        help="ASR 引擎，默认 auto（SenseVoice/FunASR）；fun-asr-nano 用于辅助对照或显式转写",
+        choices=["auto", "sensevoice"],
+        help="兼容旧调用的 ASR 引擎参数；当前只运行 SenseVoice",
     )
     parser.add_argument(
         "--model",
         default=DEFAULT_SENSEVOICE_MODEL,
-        help="SenseVoice/FunASR 模型名，默认 iic/SenseVoiceSmall",
-    )
-    parser.add_argument(
-        "--nano-model",
-        default=DEFAULT_FUNASR_NANO_MODEL,
-        help="Fun-ASR-Nano 模型名，默认 FunAudioLLM/Fun-ASR-Nano-2512",
-    )
-    parser.add_argument(
-        "--nano-hub",
-        default=DEFAULT_FUNASR_NANO_HUB,
-        choices=["ms", "hf"],
-        help="Fun-ASR-Nano 模型源，默认 ms（ModelScope，国内网络更稳）",
-    )
-    parser.add_argument(
-        "--hotwords",
-        default="",
-        help="逗号分隔热词，Fun-ASR-Nano 辅助转录时使用",
-    )
-    parser.add_argument(
-        "--device",
-        default="auto",
-        help="FunASR 设备，默认 auto（macOS 优先 mps，否则 cpu）",
-    )
-    parser.add_argument(
-        "--no-vad",
-        action="store_true",
-        help="Fun-ASR-Nano 不启用 fsmn-vad",
-    )
-    parser.add_argument(
-        "--no-speaker-diarization",
-        action="store_true",
-        help="兼容旧参数；SenseVoice 默认已经不启用说话人分离",
-    )
-    parser.add_argument(
-        "--speaker-diarization",
-        action="store_true",
-        help="显式启用 SenseVoice + cam++ 说话人分离；仅在需要区分发言人时使用",
-    )
-    parser.add_argument(
-        "--sensevoice-vad",
-        action="store_true",
-        help="显式启用 SenseVoice 的 fsmn-vad 分段；默认关闭，优先保留直接 SenseVoice 时间戳",
-    )
-    parser.add_argument(
-        "--require-speaker-diarization",
-        action="store_true",
-        help="如果 SenseVoice 说话人分离不可用则直接失败，而不是改为纯 SenseVoice 转录",
+        help="SenseVoice 模型名，默认 iic/SenseVoiceSmall",
     )
     parser.add_argument(
         "--cache-dir",
         default="",
-        help="可选模型缓存根目录；也可用 FUNASR_MODEL_CACHE 环境变量设置",
+        help="可选模型缓存根目录；也可用 SENSEVOICE_MODEL_CACHE 环境变量设置",
     )
     parser.add_argument(
         "--output-format",
@@ -688,36 +486,17 @@ def main() -> int:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     if args.engine in {"auto", "sensevoice"}:
-        sensevoice_code = _run_sensevoice(
+        return _run_sensevoice(
             input_file=input_file,
             output_dir=output_dir,
             model_name=args.model,
             language=args.language,
             output_format=args.output_format,
-            speaker_diarization=args.speaker_diarization and not args.no_speaker_diarization,
-            require_speaker_diarization=args.require_speaker_diarization,
-            use_vad=args.sensevoice_vad,
-            allow_remote_model_lookup=args.allow_remote_model_lookup,
-            include_raw_json=args.debug_raw_json,
-        )
-        return sensevoice_code
-
-    if args.engine == "fun-asr-nano":
-        return _run_funasr_nano(
-            input_file=input_file,
-            output_dir=output_dir,
-            model_name=args.nano_model,
-            hub=args.nano_hub,
-            language=args.language,
-            output_format=args.output_format,
-            hotwords=args.hotwords,
-            device=args.device,
-            use_vad=not args.no_vad,
             allow_remote_model_lookup=args.allow_remote_model_lookup,
             include_raw_json=args.debug_raw_json,
         )
 
-    print("未知 ASR 引擎；只能使用 SenseVoice/FunASR。", file=sys.stderr)
+    print("未知 ASR 引擎；只能使用 SenseVoice。", file=sys.stderr)
     return 2
 
 

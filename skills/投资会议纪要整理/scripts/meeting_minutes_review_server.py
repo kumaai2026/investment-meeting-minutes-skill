@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import html
-import difflib
 import hashlib
 import hmac
 import json
@@ -90,20 +89,14 @@ SITE_NAME = "D91 AI投研平台"
 PRODUCT_FAMILY = "OpenFinance"
 MEETING_TOOL_NAME = "OpenMinute"
 MEETING_SERIES_DEFAULT = "研究所周会"
-DEFAULT_FUNASR_NANO_MODEL = "FunAudioLLM/Fun-ASR-Nano-2512"
-DEFAULT_FUNASR_NANO_HUB = os.environ.get("FUNASR_NANO_HUB", "ms")
-DEFAULT_FUNASR_MODEL_CACHE = os.environ.get(
-    "FUNASR_MODEL_CACHE",
-    "/Users/nananaranja/Documents/Codex/asr-model-cache",
+DEFAULT_SENSEVOICE_MODEL_CACHE = os.environ.get(
+    "SENSEVOICE_MODEL_CACHE",
+    os.environ.get(
+        "FUNASR_MODEL_CACHE",
+        "/Users/nananaranja/Documents/Codex/asr-model-cache",
+    ),
 )
-DEFAULT_FUNASR_NANO_PYTHON = os.environ.get(
-    "FUNASR_NANO_PYTHON",
-    "/Users/nananaranja/Documents/会议纪要整理/.transcribe-venv/bin/python",
-)
-DEFAULT_ASR_HOTWORDS = (
-    "半导体,算力,AI眼镜,液冷,CPO,PCB,光模块,光芯片,东田微,依米康,"
-    "信测标准,中芯国际,中微公司,工业富联,北方华创,中际旭创,胜蓝股份"
-)
+DEFAULT_SENSEVOICE_PYTHON = os.environ.get("SENSEVOICE_PYTHON", "")
 LOG_DIR = Path("/Users/kumaai/Library/Logs/kumaai-sync")
 RCLONE_LOG_PATH = LOG_DIR / "investment-workflow-rclone.log"
 ACCESS_AUDIT_LOG_PATH = LOG_DIR / "meeting-minutes-access-audit.jsonl"
@@ -123,7 +116,7 @@ PLATFORM_ASSET_PREFIXES = ("/_next/", "/images/")
 AUTH_COOKIE_NAME = "workflow_access_token"
 PASSWORD_HASH_ITERATIONS = 260000
 VALID_ACCESS_ROLES = {"admin", "editor", "viewer", "external_viewer"}
-MEETING_TYPES = ["多人复盘会", "上市公司交流", "专家交流", "其他"]
+MEETING_TYPES = ["多人复盘会", "上市公司交流", "专家交流"]
 MEETING_SERIES = [MEETING_SERIES_DEFAULT]
 CUSTOM_CHOICE_VALUE = "__custom__"
 TEXT_SUFFIXES = {".txt", ".md", ".markdown", ".csv", ".tsv"}
@@ -751,8 +744,8 @@ def normalize_local_url(url: str) -> str:
 def normalize_meeting_type(value: str) -> str:
     cleaned = re.sub(r"\s+", "", (value or "").strip())
     if not cleaned:
-        return "其他"
-    return cleaned if cleaned in MEETING_TYPES else cleaned[:40]
+        return "多人复盘会"
+    return cleaned if cleaned in MEETING_TYPES else "多人复盘会"
 
 
 def meeting_type_options(selected: str = "") -> str:
@@ -761,9 +754,6 @@ def meeting_type_options(selected: str = "") -> str:
     for value in MEETING_TYPES:
         flag = " selected" if value == selected else ""
         options.append(f'<option value="{html.escape(value)}"{flag}>{html.escape(value)}</option>')
-    if selected and selected not in MEETING_TYPES and selected != CUSTOM_CHOICE_VALUE:
-        options.append(f'<option value="{html.escape(selected)}" selected>{html.escape(selected)}</option>')
-    options.append(f'<option value="{CUSTOM_CHOICE_VALUE}">新增会议类型...</option>')
     return "".join(options)
 
 
@@ -794,7 +784,7 @@ def infer_meeting_type_from_text(value: str) -> str:
         return "上市公司交流"
     if any(keyword in text for keyword in ("复盘", "晨会", "周会", "例会", "策略会", "多人", "市场回顾")):
         return "多人复盘会"
-    return "其他"
+    return "多人复盘会"
 
 
 def infer_meeting_series_from_text(value: str, meeting_type: str = "") -> str:
@@ -1030,7 +1020,7 @@ def create_import_upload_session(payload: dict[str, Any]) -> dict[str, Any]:
     title = sanitize_title(str(payload.get("meeting_title") or inferred_title or "投资会议纪要"))
     meeting_date = normalize_meeting_date(str(payload.get("meeting_date") or ""))
     raw_meeting_type = str(payload.get("meeting_type") or "")
-    meeting_type = normalize_meeting_type(str(payload.get("custom_meeting_type") or raw_meeting_type or inferred_type or "其他"))
+    meeting_type = normalize_meeting_type(str(payload.get("custom_meeting_type") or raw_meeting_type or inferred_type or "多人复盘会"))
     meeting_series = normalize_meeting_series(
         str(payload.get("custom_meeting_series") or payload.get("meeting_series") or inferred_series or MEETING_SERIES_DEFAULT)
     )
@@ -1117,7 +1107,7 @@ def append_import_upload_chunk(upload_id: str, file_index: int, offset: int, dat
             "percent": percent,
             "message": f"正在上传 {item.get('filename') or '文件'}",
             "title": str(manifest.get("title") or "投资会议纪要"),
-            "meeting_type": str(manifest.get("meeting_type") or "其他"),
+            "meeting_type": str(manifest.get("meeting_type") or "多人复盘会"),
             "meeting_series": str(manifest.get("meeting_series") or MEETING_SERIES_DEFAULT),
             "file_count": len(files),
             "status_url": str(manifest.get("status_url") or ""),
@@ -1150,7 +1140,7 @@ def complete_import_upload_session(upload_id: str) -> dict[str, Any]:
             "percent": 72,
             "message": "文件上传完成，正在提交给 Dify 工作流。",
             "title": str(manifest.get("title") or "投资会议纪要"),
-            "meeting_type": str(manifest.get("meeting_type") or "其他"),
+            "meeting_type": str(manifest.get("meeting_type") or "多人复盘会"),
             "meeting_series": str(manifest.get("meeting_series") or MEETING_SERIES_DEFAULT),
             "file_count": len(files),
             "status_url": str(manifest.get("status_url") or ""),
@@ -1160,7 +1150,7 @@ def complete_import_upload_session(upload_id: str) -> dict[str, Any]:
         "draft_id": draft_id,
         "meeting_date": meeting_date,
         "title": str(manifest.get("title") or "投资会议纪要"),
-        "meeting_type": str(manifest.get("meeting_type") or "其他"),
+        "meeting_type": str(manifest.get("meeting_type") or "多人复盘会"),
         "meeting_series": str(manifest.get("meeting_series") or MEETING_SERIES_DEFAULT),
         "operator_notes": str(manifest.get("operator_notes") or ""),
         "files": [
@@ -1222,7 +1212,7 @@ def validate_post_agent_markdown(markdown: str) -> None:
     for marker in placeholder_markers:
         if marker in text:
             raise ValueError(f"Dify 整理阶段返回了错误占位内容，命中：{marker}。已拒绝创建二次校对草稿，请检查 Dify 模型节点输出。")
-    required_sections = ("## 一、逐发言人原文整理",)
+    required_sections = ("## 一、发言整理",)
     missing = [section for section in required_sections if section not in text]
     if missing:
         raise ValueError(f"Dify 整理阶段输出缺少必需章节：{'、'.join(missing)}，已拒绝创建二次校对草稿。")
@@ -1324,13 +1314,11 @@ def extract_docx_text(path: Path) -> str:
 
 def resolve_asr_model_choice(choice: str) -> dict[str, str]:
     value = str(choice or "").strip().lower()
-    if "nano" in value:
-        return {"engine": "fun-asr-nano", "model": "Fun-ASR-Nano-2512", "sensevoice_model": "iic/SenseVoiceSmall", "aux_engine": ""}
     if "sensevoice" in value and "auto" not in value:
         return {"engine": "sensevoice", "model": "SenseVoiceSmall", "sensevoice_model": "iic/SenseVoiceSmall", "aux_engine": ""}
     return {
         "engine": "auto",
-        "model": "自动：SenseVoiceSmall；Nano 需显式选择；禁止降级为其他 ASR",
+        "model": "自动：SenseVoiceSmall；禁止降级为其他 ASR",
         "sensevoice_model": "iic/SenseVoiceSmall",
         "aux_engine": "",
     }
@@ -1352,35 +1340,6 @@ def _read_transcript_json(output_dir: Path, stem: str) -> dict[str, Any]:
     except json.JSONDecodeError:
         return {}
     return data if isinstance(data, dict) else {}
-
-
-def _asr_diff_summary(primary_text: str, auxiliary_text: str, limit: int = 5000) -> str:
-    if not primary_text or not auxiliary_text:
-        return ""
-    diff = difflib.unified_diff(
-        primary_text.splitlines() or [primary_text],
-        auxiliary_text.splitlines() or [auxiliary_text],
-        fromfile="sensevoice",
-        tofile="fun-asr-nano",
-        lineterm="",
-    )
-    chunks: list[str] = []
-    total = 0
-    truncated = False
-    for line in diff:
-        line_length = len(line) + 1
-        if total + line_length > limit:
-            remaining = max(limit - total, 0)
-            if remaining:
-                chunks.append(line[:remaining].rstrip())
-            truncated = True
-            break
-        chunks.append(line)
-        total += line_length
-    text = "\n".join(chunks).strip()
-    if truncated:
-        text = text.rstrip() + "\n...（差异过长，已截断）"
-    return text
 
 
 def _normalize_asr_timestamp_segments(filename: str, segments: Any, limit: int = 160) -> list[dict[str, str]]:
@@ -1433,10 +1392,12 @@ def transcribe_audio_payload(path: Path, output_dir: Path, *, asr_model_choice: 
     output_dir.mkdir(parents=True, exist_ok=True)
     model_config = resolve_asr_model_choice(asr_model_choice)
     primary_dir = output_dir / "primary"
-    auxiliary_dir = output_dir / "fun-asr-nano"
     primary_dir.mkdir(parents=True, exist_ok=True)
-    auxiliary_dir.mkdir(parents=True, exist_ok=True)
-    primary_python = DEFAULT_FUNASR_NANO_PYTHON if model_config["engine"] in {"auto", "sensevoice", "fun-asr-nano"} and Path(DEFAULT_FUNASR_NANO_PYTHON).exists() else sys.executable
+    primary_python = (
+        DEFAULT_SENSEVOICE_PYTHON
+        if DEFAULT_SENSEVOICE_PYTHON and Path(DEFAULT_SENSEVOICE_PYTHON).exists()
+        else sys.executable
+    )
     command = [
         primary_python,
         str(SCRIPT_DIR / "transcribe_audio.py"),
@@ -1448,14 +1409,12 @@ def transcribe_audio_payload(path: Path, output_dir: Path, *, asr_model_choice: 
         "--model",
         model_config["sensevoice_model"],
         "--output-format",
-        "all" if model_config["engine"] in {"auto", "sensevoice"} else "txt",
+        "all",
         "--language",
-        "zh" if model_config["engine"] != "fun-asr-nano" else "中文",
+        "zh",
     ]
-    if model_config["engine"] == "fun-asr-nano":
-        command.extend(["--nano-model", DEFAULT_FUNASR_NANO_MODEL, "--nano-hub", DEFAULT_FUNASR_NANO_HUB, "--hotwords", DEFAULT_ASR_HOTWORDS])
-    if DEFAULT_FUNASR_MODEL_CACHE:
-        command.extend(["--cache-dir", DEFAULT_FUNASR_MODEL_CACHE])
+    if DEFAULT_SENSEVOICE_MODEL_CACHE:
+        command.extend(["--cache-dir", DEFAULT_SENSEVOICE_MODEL_CACHE])
     completed = subprocess.run(
         command,
         text=True,
@@ -1475,68 +1434,17 @@ def transcribe_audio_payload(path: Path, output_dir: Path, *, asr_model_choice: 
         "text": primary_text,
         "timestamp_detected": bool(primary_json.get("timestamp_detected") or speaker_segments),
         "timestamp_segments": speaker_segments,
-        "speaker_diarization_enabled": bool(primary_json.get("speaker_diarization_enabled")),
-        "speaker_diarization_detected": bool(primary_json.get("speaker_diarization_detected")),
         "speakers": primary_json.get("speakers") or [],
         "speaker_segments": speaker_segments,
         "sentence_info": speaker_segments,
-        "auxiliary_engine": model_config.get("aux_engine", ""),
-        "auxiliary_model": DEFAULT_FUNASR_NANO_MODEL if model_config.get("aux_engine") == "fun-asr-nano" else "",
+        "auxiliary_engine": "",
+        "auxiliary_model": "",
         "auxiliary_text": "",
         "auxiliary_ok": False,
         "auxiliary_status": "",
         "asr_comparison_diff": "",
+        "auxiliary_transcripts": {},
     }
-    if model_config.get("aux_engine") == "fun-asr-nano":
-        aux_command = [
-            DEFAULT_FUNASR_NANO_PYTHON if Path(DEFAULT_FUNASR_NANO_PYTHON).exists() else sys.executable,
-            str(SCRIPT_DIR / "transcribe_audio.py"),
-            str(path),
-            "--output-dir",
-            str(auxiliary_dir),
-            "--engine",
-            "fun-asr-nano",
-            "--nano-model",
-            DEFAULT_FUNASR_NANO_MODEL,
-            "--nano-hub",
-            DEFAULT_FUNASR_NANO_HUB,
-            "--output-format",
-            "txt",
-            "--language",
-            "中文",
-            "--hotwords",
-            DEFAULT_ASR_HOTWORDS,
-        ]
-        if DEFAULT_FUNASR_MODEL_CACHE:
-            aux_command.extend(["--cache-dir", DEFAULT_FUNASR_MODEL_CACHE])
-        aux_completed = subprocess.run(
-            aux_command,
-            text=True,
-            capture_output=True,
-            timeout=3600,
-            env={**os.environ, "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"},
-        )
-        auxiliary_text = ""
-        if aux_completed.returncode == 0:
-            auxiliary_text = _read_transcript_text(auxiliary_dir, path.stem)
-        auxiliary_error = "" if aux_completed.returncode == 0 else (aux_completed.stderr or aux_completed.stdout or "Fun-ASR-Nano 转录失败").strip()
-        payload.update(
-            {
-                "auxiliary_ok": aux_completed.returncode == 0,
-                "auxiliary_text": auxiliary_text,
-                "auxiliary_status": "Fun-ASR-Nano 转录成功" if aux_completed.returncode == 0 else f"Fun-ASR-Nano 转录失败：{auxiliary_error[:300]}",
-                "asr_comparison_diff": _asr_diff_summary(primary_text, auxiliary_text),
-                "auxiliary_transcripts": {
-                    "fun_asr_nano": {
-                        "ok": aux_completed.returncode == 0,
-                        "model": DEFAULT_FUNASR_NANO_MODEL,
-                        "hub": DEFAULT_FUNASR_NANO_HUB,
-                        "text": auxiliary_text,
-                        "error": auxiliary_error,
-                    }
-                },
-            }
-        )
     return payload
 
 
@@ -1633,7 +1541,6 @@ def ingest_dify_file_list(files: list[dict[str, Any]], *, mode: str = "all", asr
 
     document_sections: list[str] = []
     audio_sections: list[str] = []
-    auxiliary_audio_sections: list[str] = []
     comparison_sections: list[str] = []
     timestamp_index_sections: list[str] = []
     all_timestamp_segments: list[dict[str, str]] = []
@@ -1687,18 +1594,9 @@ def ingest_dify_file_list(files: list[dict[str, Any]], *, mode: str = "all", asr
                         if timestamp_index:
                             timestamp_index_sections.append(f"### {filename}（SenseVoice 时间戳索引）\n\n{timestamp_index}")
                     elif model_config["engine"] in {"auto", "sensevoice"}:
-                        warnings.append(f"{filename}: SenseVoice 未返回可用时间戳索引，音频存疑项需人工定位或使用 SenseVoice/FunASR VAD 时间锚点")
-                    auxiliary_text = str(asr_payload.get("auxiliary_text") or "").strip()
-                    if auxiliary_text:
-                        auxiliary_audio_sections.append(
-                            f"### {filename}（Fun-ASR-Nano-2512 辅助转录）\n\n{auxiliary_text}"
-                        )
+                        warnings.append(f"{filename}: SenseVoice 未返回可用时间戳索引，音频存疑项需人工定位")
                     if asr_payload.get("auxiliary_status"):
                         comparison_sections.append(f"- {filename}: {asr_payload.get('auxiliary_status')}")
-                    if asr_payload.get("asr_comparison_diff"):
-                        comparison_sections.append(
-                            f"### {filename}（SenseVoice vs Fun-ASR-Nano 差异）\n\n```diff\n{asr_payload.get('asr_comparison_diff')}\n```"
-                        )
                 else:
                     warnings.append(f"{filename}: 转录完成但未生成有效文本")
             elif suffix == ".pdf" and extract_documents:
@@ -1714,7 +1612,6 @@ def ingest_dify_file_list(files: list[dict[str, Any]], *, mode: str = "all", asr
 
     document_text = "\n\n".join(document_sections).strip()
     audio_text = "\n\n".join(audio_sections).strip()
-    fun_asr_nano_text = "\n\n".join(auxiliary_audio_sections).strip()
     asr_comparison_summary = "\n\n".join(comparison_sections).strip()
     sensevoice_timestamp_index = "\n\n".join(timestamp_index_sections).strip()
     timestamp_index_text = f"【SenseVoice 时间戳索引】\n{sensevoice_timestamp_index}" if sensevoice_timestamp_index else ""
@@ -1732,8 +1629,6 @@ def ingest_dify_file_list(files: list[dict[str, Any]], *, mode: str = "all", asr
     elif audio_text:
         input_mode = "音频/视频"
         summary = "已完成音频/视频转录。初校时请重点补充分段、发言人和专有名词。"
-        if fun_asr_nano_text:
-            summary += "\n\nFun-ASR-Nano-2512 已作为辅助转录输出；公司名、股票代码、数字、英文缩写和金融术语冲突时，请人工优先校对后再进入整理。"
     elif document_text:
         input_mode = "文稿"
         summary = "已完成文稿抽取。初校时可直接修正格式、发言人和关键名词。"
@@ -1757,8 +1652,7 @@ def ingest_dify_file_list(files: list[dict[str, Any]], *, mode: str = "all", asr
         "sensevoice_timestamp_index": sensevoice_timestamp_index,
         "sensevoice_timestamp_segments": all_timestamp_segments,
         "timestamp_detected": bool(all_timestamp_segments),
-        "fun_asr_nano_transcript": fun_asr_nano_text,
-        "auxiliary_transcripts": {"fun_asr_nano": fun_asr_nano_text} if fun_asr_nano_text else {},
+        "auxiliary_transcripts": {},
         "asr_comparison_summary": asr_comparison_summary,
         "combined_text": combined_text,
         "cross_check_summary": summary,
@@ -1910,9 +1804,9 @@ def transcribe_import_media_after_dify_asr(
     for index, path in enumerate(media_files, start=1):
         if callable(progress_callback):
             progress_callback(
-                "本地 SenseVoice/FunASR 转录",
+                "本地 SenseVoice 转录",
                 68 + int(20 * (index - 1) / max(1, len(media_files))),
-                f"Dify ASR 未产出文本，正在本地 SenseVoice/FunASR 转录：{path.name}",
+                f"Dify ASR 未产出文本，正在本地 SenseVoice 转录：{path.name}",
             )
         asr_payload = transcribe_audio_payload(path, transcript_dir / path.stem)
         text = str(asr_payload.get("text") or "").strip()
@@ -1923,7 +1817,7 @@ def transcribe_import_media_after_dify_asr(
             )
             timestamp_index = _format_asr_timestamp_index(timestamp_segments)
             timestamp_block = f"\n\n【SenseVoice 时间戳索引】\n{timestamp_index}" if timestamp_index else ""
-            sections.append(f"### {path.name}（Dify ASR无文本后本地 SenseVoice/FunASR 转录）\n\n{text}{timestamp_block}")
+            sections.append(f"### {path.name}（Dify ASR无文本后本地 SenseVoice 转录）\n\n{text}{timestamp_block}")
     return "\n\n".join(sections).strip()
 
 
@@ -2072,14 +1966,14 @@ def call_dify_workflow_for_import(
             progress_callback=progress_callback,
         )
         if not fallback_text:
-            raise RuntimeError("Dify ASR 未产出文本，本地 SenseVoice/FunASR 也未生成有效转录文本")
+            raise RuntimeError("Dify ASR 未产出文本，本地 SenseVoice 也未生成有效转录文本")
         retry_inputs = dict(inputs)
         retry_inputs["transcript_text"] = "\n\n".join(
             item for item in [str(inputs.get("transcript_text") or "").strip(), fallback_text] if item
         )
         retry_inputs["correction_notes"] = (
             str(retry_inputs.get("correction_notes") or "")
-            + "\nDify ASR 已优先尝试但未产出可合并文本；已在 Dify 外部完成本地 SenseVoice/FunASR 转录后重跑工作流。"
+            + "\nDify ASR 已优先尝试但未产出可合并文本；已在 Dify 外部完成本地 SenseVoice 转录后重跑工作流。"
         )
         retry_inputs.pop("asr_audio_file", None)
         document_uploads = [
@@ -2099,7 +1993,7 @@ def call_dify_workflow_for_import(
         else:
             retry_inputs.pop("meeting_files", None)
         if callable(progress_callback):
-            progress_callback("重跑 Dify 工作流", 90, "已带入本地 SenseVoice/FunASR 转录文本，不再让 Dify HTTP 节点长时间等待")
+            progress_callback("重跑 Dify 工作流", 90, "已带入本地 SenseVoice 转录文本，不再让 Dify HTTP 节点长时间等待")
         return run_dify(retry_inputs, retry_user_suffix="-local-fallback")
 
     if callable(progress_callback):
@@ -2140,7 +2034,7 @@ def run_import_job(job: dict[str, Any]) -> None:
     draft_id = str(job.get("draft_id") or "")
     meeting_date = normalize_meeting_date(str(job.get("meeting_date") or ""))
     title = sanitize_title(str(job.get("title") or "投资会议纪要"))
-    meeting_type = normalize_meeting_type(str(job.get("meeting_type") or "其他"))
+    meeting_type = normalize_meeting_type(str(job.get("meeting_type") or "多人复盘会"))
     meeting_series = normalize_meeting_series(str(job.get("meeting_series") or MEETING_SERIES_DEFAULT))
     files = job.get("files") if isinstance(job.get("files"), list) else []
     operator_notes = str(job.get("operator_notes") or "").strip()
@@ -2356,7 +2250,7 @@ def structured_table_archive_path(
     source_markdown_path: Path,
 ) -> Path:
     date_part = normalize_meeting_date(meeting_date)
-    type_part = sanitize_title(meeting_type or "其他")
+    type_part = sanitize_title(meeting_type or "多人复盘会")
     session_part = sanitize_title(meeting_title or source_markdown_path.stem)
     target_dir = structured_table_archive_dir() / date_part / type_part / session_part
     target_dir.mkdir(parents=True, exist_ok=True)
@@ -2480,7 +2374,7 @@ def call_dify_workflow_for_minutes(*, draft_id: str, source_markdown: str, meta:
         inputs = {
             "transcript_text": extract_pre_agent_text(source_markdown),
             "meeting_title": str(meta.get("title") or markdown_title(source_markdown)),
-            "meeting_type": str(meta.get("meeting_type") or markdown_field(source_markdown, "会议类型", "其他")),
+            "meeting_type": str(meta.get("meeting_type") or markdown_field(source_markdown, "会议类型", "多人复盘会")),
             "custom_meeting_type": "",
             "meeting_series": str(meta.get("meeting_series") or markdown_field(source_markdown, "会议系列", MEETING_SERIES_DEFAULT)),
             "custom_meeting_series": "",
@@ -2570,7 +2464,7 @@ def call_dify_workflow_for_confirmation(*, action: str, draft_id: str, markdown:
             "final_markdown": markdown,
             "transcript_text": "",
             "meeting_title": str(meta.get("title") or "投资会议纪要"),
-            "meeting_type": str(meta.get("meeting_type") or "其他"),
+            "meeting_type": str(meta.get("meeting_type") or "多人复盘会"),
             "custom_meeting_type": "",
             "meeting_series": str(meta.get("meeting_series") or MEETING_SERIES_DEFAULT),
             "custom_meeting_series": "",
@@ -2644,7 +2538,7 @@ def execute_confirm_draft(draft_id: str, markdown: str | None = None, *, workflo
     if not final_markdown.startswith("#"):
         raise ValueError("final markdown must start with a heading")
     meeting_date = normalize_meeting_date(str(meta.get("meeting_date") or markdown_field(final_markdown, "会议日期") or ""))
-    meeting_type = normalize_meeting_type(str(meta.get("meeting_type") or markdown_field(final_markdown, "会议类型") or "其他"))
+    meeting_type = normalize_meeting_type(str(meta.get("meeting_type") or markdown_field(final_markdown, "会议类型") or "多人复盘会"))
     meeting_series = normalize_meeting_series(str(meta.get("meeting_series") or markdown_field(final_markdown, "会议系列") or ""))
     final_markdown = ensure_markdown_metadata(
         final_markdown,
@@ -2737,7 +2631,7 @@ def execute_confirm_archive(draft_id: str, *, workflow_run_id: str = "") -> dict
     if not final_markdown.startswith("#"):
         raise ValueError("final markdown must start with a heading")
     meeting_date = normalize_meeting_date(str(meta.get("meeting_date") or markdown_field(final_markdown, "会议日期") or ""))
-    meeting_type = normalize_meeting_type(str(meta.get("meeting_type") or markdown_field(final_markdown, "会议类型") or "其他"))
+    meeting_type = normalize_meeting_type(str(meta.get("meeting_type") or markdown_field(final_markdown, "会议类型") or "多人复盘会"))
     meeting_series = normalize_meeting_series(str(meta.get("meeting_series") or markdown_field(final_markdown, "会议系列") or ""))
     final_markdown = ensure_markdown_metadata(
         final_markdown,
@@ -3200,7 +3094,7 @@ def scan_history() -> list[dict[str, Any]]:
                     "id": "file:" + str(path),
                     "meeting_date": meeting_date,
                     "title": title,
-                    "meeting_type": normalize_meeting_type(markdown_field(content, "会议类型", "其他")),
+                    "meeting_type": normalize_meeting_type(markdown_field(content, "会议类型", "多人复盘会")),
                     "meeting_series": normalize_meeting_series(markdown_field(content, "会议系列", MEETING_SERIES_DEFAULT)),
                     "status": "confirmed",
                     "updated_at": datetime.fromtimestamp(path.stat().st_mtime).isoformat(timespec="seconds"),
@@ -3378,7 +3272,7 @@ def snippet_for_terms(text: str, terms: list[str], *, window: int = 120) -> str:
 
 
 def original_text_for_search(markdown: str) -> str:
-    start = markdown.find("## 一、逐发言人原文整理")
+    start = markdown.find("## 一、发言整理")
     if start < 0:
         start = 0
     end_candidates = [
@@ -4424,7 +4318,7 @@ def scan_drafts() -> list[dict[str, Any]]:
                 "id": draft_id,
                 "meeting_date": str(meta.get("meeting_date") or meta_path.parent.parent.name),
                 "title": str(meta.get("title") or "投资会议纪要"),
-                "meeting_type": normalize_meeting_type(str(meta.get("meeting_type") or "其他")),
+                "meeting_type": normalize_meeting_type(str(meta.get("meeting_type") or "多人复盘会")),
                 "meeting_series": normalize_meeting_series(str(meta.get("meeting_series") or MEETING_SERIES_DEFAULT)),
                 "stage": str(meta.get("stage") or ""),
                 "status": str(meta.get("status") or "draft"),
@@ -4496,7 +4390,7 @@ def dashboard_data(date: str | None = None, identity: dict[str, Any] | None = No
     for item in items:
         content = str(item.get("content") or "")
         title = str(item.get("title") or "")
-        meeting_type = str(item.get("meeting_type") or "其他")
+        meeting_type = str(item.get("meeting_type") or "多人复盘会")
         meeting_types[meeting_type] += 1
         for target in item.get("targets") or []:
             target_name = str(target)
@@ -4766,7 +4660,7 @@ def portal_status_cards(identity: dict[str, Any]) -> str:
         for item in drafts
         if str(item.get("status") or "").lower() == "confirmed" and str(item.get("meeting_date") or "") == today
     )
-    meeting_types = Counter(str(item.get("meeting_type") or "其他") for item in drafts if item.get("meeting_type"))
+    meeting_types = Counter(str(item.get("meeting_type") or "多人复盘会") for item in drafts if item.get("meeting_type"))
     sync = google_drive_sync_status()
     sync_label = "正常" if sync.get("ok") else "待检查"
     type_label = " / ".join(f"{key} {value}" for key, value in meeting_types.most_common(3)) or "暂无"
@@ -5411,7 +5305,7 @@ def html_page(title: str, body: str, identity: dict[str, Any] | None = None) -> 
       if (/(专家|访谈|产业链|深访|电话会|expert)/.test(value)) return "专家交流";
       if (/(上市公司|管理层|业绩|财报|路演|公司交流|ir)/.test(value)) return "上市公司交流";
       if (/(复盘|晨会|周会|例会|策略会|多人|市场回顾)/.test(value)) return "多人复盘会";
-      return "其他";
+      return "多人复盘会";
     }};
     const inferSeries = (text, type) => {{
       return "研究所周会";
@@ -6487,7 +6381,7 @@ if (dataWindow) {{
 </div>
 <div class="item">
   <strong>会议类型</strong>
-  <p class="muted">默认类型：多人复盘会、上市公司交流、专家交流、其他。当前预置会议系列只有“研究所周会”，也支持新增系列；类型和系列都会进入草稿 metadata、历史筛选和知识库归档 metadata。</p>
+  <p class="muted">默认类型：多人复盘会；仅当材料明确是单家公司专场或专家问答时，选择上市公司交流或专家交流。当前预置会议系列只有“研究所周会”，也支持新增系列；类型和系列都会进入草稿 metadata、历史筛选和知识库归档 metadata。</p>
 </div>
 """
         self._send(200, html_page("OpenMinute-会议纪要", body), "text/html; charset=utf-8")
@@ -6513,7 +6407,7 @@ if (dataWindow) {{
             minute_rows.append(
                 f"""<tr>
   <td>{html.escape(str(item.get('meeting_date') or ''))}</td>
-  <td><span class="status">{html.escape(str(item.get('meeting_type') or '其他'))}</span></td>
+  <td><span class="status">{html.escape(str(item.get('meeting_type') or '多人复盘会'))}</span></td>
   <td><a href="{html.escape(normalize_local_url(str(item.get('review_url') or '')))}">{html.escape(str(item.get('title') or '投资会议纪要'))}</a></td>
   <td>{html.escape(' / '.join(str(target) for target in item.get('targets') or []) or '-')}</td>
 </tr>"""
@@ -6521,7 +6415,7 @@ if (dataWindow) {{
         speaker_blocks = []
         for speaker, values in (data.get("speaker_rollup") or {}).items():
             rows = "".join(
-                f"<li><a href=\"{html.escape(normalize_local_url(str(row.get('url') or '')))}\">{html.escape(str(row.get('title') or ''))}</a> <span class=\"status\">{html.escape(str(row.get('meeting_type') or '其他'))}</span> {html.escape(str(row.get('heading') or ''))}</li>"
+                f"<li><a href=\"{html.escape(normalize_local_url(str(row.get('url') or '')))}\">{html.escape(str(row.get('title') or ''))}</a> <span class=\"status\">{html.escape(str(row.get('meeting_type') or '多人复盘会'))}</span> {html.escape(str(row.get('heading') or ''))}</li>"
                 for row in values
             )
             speaker_blocks.append(f"<div class=\"item\"><strong>{html.escape(str(speaker))}</strong><ul>{rows}</ul></div>")
@@ -6585,7 +6479,7 @@ if (dashboardDataWindow) {{
   <div class="input-grid">
     <label class="field"><span>会议标题</span><input name="meeting_title" id="meeting-title-input" placeholder="选择文件后自动预填，也可以手动修改"></label>
     <label class="field"><span>会议日期</span><input name="meeting_date" id="meeting-date-input" type="date" value="{html.escape(today)}"></label>
-    <label class="field"><span>会议类型</span><select name="meeting_type" id="meeting-type-select" data-custom-input="custom-meeting-type-input" data-custom-value="{CUSTOM_CHOICE_VALUE}">{meeting_type_options("多人复盘会")}</select><input name="custom_meeting_type" id="custom-meeting-type-input" placeholder="填写新增会议类型" hidden></label>
+    <label class="field"><span>会议类型</span><select name="meeting_type" id="meeting-type-select">{meeting_type_options("多人复盘会")}</select></label>
     <label class="field"><span>会议系列</span><select name="meeting_series" id="meeting-series-select" data-custom-input="custom-meeting-series-input" data-custom-value="{CUSTOM_CHOICE_VALUE}">{meeting_series_options(MEETING_SERIES_DEFAULT)}</select><input name="custom_meeting_series" id="custom-meeting-series-input" placeholder="填写新增会议系列" hidden></label>
   </div>
   <div class="upload-zone">
@@ -6622,13 +6516,11 @@ if (dashboardDataWindow) {{
         title = sanitize_title(str(payload.get("meeting_title") or inferred_title or "投资会议纪要"))
         meeting_date = normalize_meeting_date(str(payload.get("meeting_date") or ""))
         selected_meeting_type_raw = str(payload.get("meeting_type") or "")
-        selected_meeting_type = "" if selected_meeting_type_raw == CUSTOM_CHOICE_VALUE else normalize_meeting_type(selected_meeting_type_raw)
-        if payload.get("custom_meeting_type"):
-            meeting_type = normalize_meeting_type(str(payload.get("custom_meeting_type") or ""))
-        elif selected_meeting_type in {"", "多人复盘会"} and inferred_type != "其他":
+        selected_meeting_type = normalize_meeting_type(selected_meeting_type_raw)
+        if selected_meeting_type in {"", "多人复盘会"} and inferred_type != "多人复盘会":
             meeting_type = inferred_type
         else:
-            meeting_type = normalize_meeting_type(selected_meeting_type or inferred_type or "其他")
+            meeting_type = normalize_meeting_type(selected_meeting_type or inferred_type or "多人复盘会")
         selected_meeting_series = str(payload.get("meeting_series") or "")
         if selected_meeting_series == CUSTOM_CHOICE_VALUE:
             selected_meeting_series = ""
@@ -7486,7 +7378,7 @@ if (dashboardDataWindow) {{
         meta = load_meta(folder)
         markdown = current_markdown(folder)
         stage = str(meta.get("stage") or "post_agent")
-        meeting_type = html.escape(str(meta.get("meeting_type") or markdown_field(markdown, "会议类型", "其他")))
+        meeting_type = html.escape(str(meta.get("meeting_type") or markdown_field(markdown, "会议类型", "多人复盘会")))
         confirm_action = "/confirm-input" if stage == "pre_agent" else "/confirm"
         confirm_label = "确认文本，开始生成会议纪要" if stage == "pre_agent" else "确认终稿，进入归档确认"
         gate_text = (
@@ -7691,7 +7583,7 @@ if (dashboardDataWindow) {{
                 "<tr>"
                 f"<td>{html.escape(str(item.get('meeting_date') or ''))}</td>"
                 f"<td><a href=\"{html.escape(str(item.get('review_url') or ''))}\">{html.escape(str(item.get('title') or ''))}</a></td>"
-                f"<td>{html.escape(str(item.get('meeting_type') or '其他'))}</td>"
+                f"<td>{html.escape(str(item.get('meeting_type') or '多人复盘会'))}</td>"
                 f"<td>{html.escape(str(item.get('meeting_series') or MEETING_SERIES_DEFAULT))}</td>"
                 f"<td>{html.escape(str(item.get('stage') or '-'))}</td>"
                 f"<td><span class=\"status\">{html.escape(str(item.get('status') or ''))}</span></td>"
@@ -7930,7 +7822,7 @@ if (dashboardDataWindow) {{
             rows.append(
                 f"""<div class="item">
   <div><a href="{html.escape(str(item.get('review_url')))}"><strong>{html.escape(str(item.get('title') or '投资会议纪要'))}</strong></a> <span class="status">{html.escape(str(item.get('status') or 'draft'))}</span></div>
-  <div class="muted">会议日期：{html.escape(str(item.get('meeting_date') or ''))}　会议类型：{html.escape(str(item.get('meeting_type') or '其他'))}　会议系列：{html.escape(str(item.get('meeting_series') or MEETING_SERIES_DEFAULT))}　来源：Obsidian 正式归档</div>
+  <div class="muted">会议日期：{html.escape(str(item.get('meeting_date') or ''))}　会议类型：{html.escape(str(item.get('meeting_type') or '多人复盘会'))}　会议系列：{html.escape(str(item.get('meeting_series') or MEETING_SERIES_DEFAULT))}　来源：Obsidian 正式归档</div>
   <div class="muted">知识库：<span class="status">{html.escape(knowledge_text)}</span>{f'　{html.escape(knowledge_detail)}' if knowledge_detail else ''}</div>
   <div class="muted">权限：{html.escape(permission_text)}</div>
   <div class="muted">标的：{html.escape(targets or '-')}</div>
@@ -8227,7 +8119,7 @@ if (dashboardDataWindow) {{
 {workflow_stage_header(stage_name, "查看本次工作流结果；需要归档时请在下方确认。")}
 <div class="meta">
   <strong>{html.escape(str(meta.get("title") or markdown_title(markdown)))}</strong>
-  <div class="muted">会议日期：{html.escape(str(meta.get("meeting_date") or ""))}　会议类型：{html.escape(str(meta.get("meeting_type") or "其他"))}　会议系列：{html.escape(str(meta.get("meeting_series") or MEETING_SERIES_DEFAULT))}　更新时间：{html.escape(str(meta.get("updated_at") or ""))}</div>
+  <div class="muted">会议日期：{html.escape(str(meta.get("meeting_date") or ""))}　会议类型：{html.escape(str(meta.get("meeting_type") or "多人复盘会"))}　会议系列：{html.escape(str(meta.get("meeting_series") or MEETING_SERIES_DEFAULT))}　更新时间：{html.escape(str(meta.get("updated_at") or ""))}</div>
 </div>
 <div class="bar">
   <a href="{review_url}">打开人工校对</a>

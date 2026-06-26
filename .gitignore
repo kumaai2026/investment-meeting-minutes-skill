@@ -5,3 +5,7 @@ __pycache__/
 *.bak*
 .venv/
 node_modules/
+.meeting-minutes-internal/
+**/.meeting-minutes-internal/**
+**/*_analysis_ledger.json
+**/*_qa_report.json

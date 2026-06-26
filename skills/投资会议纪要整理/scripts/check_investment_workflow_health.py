@@ -56,16 +56,10 @@ DIFY_DOCKER_DIR = Path("/Users/kumaai/dify/docker")
 DIFY_DB_CONTAINER = "docker-db_postgres-1"
 DIFY_WORKFLOW_APP_ID = "8b8b90b1-432c-414a-842a-7426c628ae39"
 LIVE_SKILL_DIR = Path("/Users/kumaai/.codex/skills/投资会议纪要整理")
-TYPE_SKILL_NAMES = [
-    "投资会议纪要-多人复盘会",
-    "投资会议纪要-上市公司交流",
-    "投资会议纪要-专家交流",
-    "投资会议纪要-其他",
-]
 WECHAT_LAUNCH_AGENT_PATH = Path("/Users/kumaai/Library/LaunchAgents/com.kumaai.wechat-tools-bridge.plist")
 DEFAULT_ASR_RUNTIME_PYTHON = Path(
     os.environ.get(
-        "FUNASR_NANO_PYTHON",
+        "SENSEVOICE_PYTHON",
         "/Users/nananaranja/Documents/会议纪要整理/.transcribe-venv/bin/python",
     )
 )
@@ -222,19 +216,13 @@ def asr_model_cache_check(*, strict: bool) -> dict[str, Any]:
         for name, model in models.items()
         if name == "sensevoice" and isinstance(model, dict) and not model.get("complete")
     }
-    optional_incomplete = {
-        name: model
-        for name, model in models.items()
-        if name != "sensevoice" and isinstance(model, dict) and not model.get("complete")
-    }
     if returncode == 0 and not required_incomplete:
         return check(
             "ok",
             "ASR 模型缓存",
-            "纯 SenseVoice 必需模型缓存完整；Nano/VAD/说话人分离按辅助能力处理",
+            "SenseVoice 必需模型缓存完整",
             cache_root=payload.get("cache_root"),
             models=models,
-            optional_incomplete=optional_incomplete,
         )
     status = "error" if strict else "warning"
     return check(
@@ -243,7 +231,6 @@ def asr_model_cache_check(*, strict: bool) -> dict[str, Any]:
         "纯 SenseVoice 必需模型缓存不完整；运行期禁止远程查找或下载模型",
         cache_root=payload.get("cache_root"),
         incomplete=required_incomplete,
-        optional_incomplete=optional_incomplete,
         stderr=stderr.strip(),
     )
 
@@ -265,19 +252,13 @@ def sensevoice_service_model_cache_check(*, strict: bool) -> dict[str, Any]:
         for model_name, model in models.items()
         if model_name == "sensevoice" and isinstance(model, dict) and not model.get("complete")
     }
-    optional_incomplete = {
-        model_name: model
-        for model_name, model in models.items()
-        if model_name != "sensevoice" and isinstance(model, dict) and not model.get("complete")
-    }
     if payload.get("ok") is True and models and not required_incomplete:
         return check(
             "ok",
             name,
-            "服务使用的纯 SenseVoice 必需模型缓存完整；Nano/VAD/说话人分离按辅助能力处理",
+            "服务使用的 SenseVoice 必需模型缓存完整",
             cache_root=model_cache.get("cache_root"),
             python=model_cache.get("python"),
-            optional_incomplete=optional_incomplete,
         )
     status = "error" if strict else "warning"
     return check(
@@ -287,7 +268,6 @@ def sensevoice_service_model_cache_check(*, strict: bool) -> dict[str, Any]:
         cache_root=model_cache.get("cache_root"),
         python=model_cache.get("python"),
         incomplete=required_incomplete,
-        optional_incomplete=optional_incomplete,
     )
 
 
@@ -672,7 +652,7 @@ def dify_workflow_output_contract_check() -> dict[str, Any]:
 
 def skill_sync_checks() -> list[dict[str, Any]]:
     checks: list[dict[str, Any]] = []
-    skill_names = ["投资会议纪要整理", *TYPE_SKILL_NAMES]
+    skill_names = ["投资会议纪要整理"]
     plugin_roots = sorted(
         Path(path)
         for path in glob.glob("/Users/kumaai/dify/docker/volumes/plugin_daemon/cwd/*/skill_agent-*/skills")
@@ -709,7 +689,59 @@ def skill_sync_checks() -> list[dict[str, Any]]:
     return checks
 
 
-def collect_checks(include_public: bool, *, strict: bool = False, runtime_smoke: bool = False) -> list[dict[str, Any]]:
+def collect_checks(
+    include_public: bool,
+    *,
+    strict: bool = False,
+    runtime_smoke: bool = False,
+    profile: str = "full",
+) -> list[dict[str, Any]]:
+    profile = (profile or "full").strip().lower()
+
+    if profile == "asr":
+        checks = strict_runtime_checks(strict=strict, runtime_smoke=runtime_smoke)
+        if include_public:
+            checks.append(public_access_check())
+        return checks
+
+    if profile == "export":
+        checks = [
+            path_check("Obsidian Vault", VAULT_DIR, writable=True),
+            path_check("原始记录归档目录", RAW_DIR, writable=True),
+            path_check("正式会议纪要目录", MINUTES_DIR, writable=True),
+            python_module_check("Python 依赖: python-docx", "docx", strict=strict),
+            command_exists_check("rclone", "rclone", Path("/Users/kumaai/.local/bin/rclone")),
+            rclone_log_check(),
+        ]
+        if include_public:
+            checks.append(public_access_check())
+        return checks
+
+    if profile == "dify":
+        checks = [
+            path_check("人工校对草稿目录", REVIEW_DRAFTS_DIR, writable=True),
+            path_check("知识库映射文件", MAPPING_PATH),
+            http_check(
+                "Dify 工作流入口",
+                "http://localhost:18081/explore/installed/4e99e8b0-7c35-4d38-a51f-5cbcc4ed1093",
+            ),
+            http_check("人工校对服务", "http://127.0.0.1:8767/health", expect_json_ok=True),
+            http_check("Obsidian 导出桥", "http://127.0.0.1:8766/health", expect_json_ok=True),
+            http_check("SenseVoice 转录服务", "http://127.0.0.1:8765/health", expect_json_ok=True),
+            docker_check(),
+            dify_workflow_output_contract_check(),
+            mapping_audit_check(),
+            external_knowledge_config_check(),
+            access_control_check(),
+            access_audit_log_check(),
+        ]
+        if strict:
+            checks.extend(strict_runtime_checks(strict=True, runtime_smoke=runtime_smoke))
+        checks.extend(skill_sync_checks())
+        if include_public:
+            checks.append(public_access_check())
+        return checks
+
     checks: list[dict[str, Any]] = [
         path_check("Obsidian Vault", VAULT_DIR, writable=True),
         path_check("原始记录归档目录", RAW_DIR, writable=True),
@@ -798,13 +830,25 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="一键检查投资会议纪要工作流本机健康状态")
     parser.add_argument("--json", action="store_true", help="输出 JSON")
     parser.add_argument("--include-public", action="store_true", help="额外检查公网域名 kuma.d91.global")
+    parser.add_argument(
+        "--profile",
+        choices=["asr", "export", "dify", "full"],
+        default="full",
+        help="检查范围；默认 full。日常音频建议 asr，导出前建议 export，Dify 上线前建议 dify",
+    )
     parser.add_argument("--strict", action="store_true", help="正式运行前严格检查本地依赖和 ASR 模型缓存；缺失即失败，不触发下载")
     parser.add_argument("--runtime-smoke", action="store_true", help="在 --strict 中额外调用 SenseVoice 服务执行真实短音频转写；耗时较长")
     args = parser.parse_args()
 
-    checks = collect_checks(include_public=args.include_public, strict=args.strict, runtime_smoke=args.runtime_smoke)
+    checks = collect_checks(
+        include_public=args.include_public,
+        strict=args.strict,
+        runtime_smoke=args.runtime_smoke,
+        profile=args.profile,
+    )
     report = {
         "generated_at": now_iso(),
+        "profile": args.profile,
         "strict": bool(args.strict),
         "runtime_smoke": bool(args.runtime_smoke),
         "summary": summarize(checks),
