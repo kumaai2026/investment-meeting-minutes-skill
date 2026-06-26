@@ -33,6 +33,16 @@ For Dify workflow integration, read `references/dify_adapter_guide.md`.
 - `standard`: use for ordinary document-only or audio-plus-document work. Batch local entity/code candidate lookup first; use Subagents only for triggered risk areas.
 - `strict_audio_or_dify`: use for audio-only, long/noisy meetings, audio/document conflicts, high-risk facts, production-like imports, or Dify workflows. Run the relevant readiness profile before the expensive step.
 
+### Select meeting type
+
+Choose the meeting type from evidence, not only from the number of speakers.
+
+- If the user or reviewed input explicitly sets `会议类型`, use it unless the materials clearly contradict it.
+- Use `上市公司交流` when the meeting is centered on one listed company or one intended listing target, and the discussion mainly covers that company's business, products, customers, revenue, margin, capacity, orders, management answers, capital actions, or risk. This remains `上市公司交流` even if there are multiple speakers or investor questions.
+- Use `专家交流` when the main speaker is an external expert, channel participant, industry practitioner, consultant, doctor, dealer, supply-chain participant, or other non-company-management source answering questions based on industry experience, channel checks, or third-party observations. The subject can be one company or one industry.
+- Use `多人复盘会` for morning meetings, weekly meetings, market reviews, portfolio reviews, and multi-speaker investment sharing where different speakers discuss different targets, sectors, positions, trading actions, or market rhythm.
+- If evidence is insufficient or conflicting, keep the default `多人复盘会` and do not invent another category.
+
 ### 0. Prepare Inputs
 
 Archive raw files before transcription or writing. Use `scripts/archive_raw_inputs.py`; read `references/archive_naming_contract.md` before changing archive/export naming or archive bridges.
@@ -94,7 +104,13 @@ Use the Content Integrity Reviewer Subagent when target attribution, multi-targe
 
 Write one unified draft. Use `references/output_contract.md`.
 
-Preserve actual speech order and speaker perspective. If a speaker appears multiple times, keep later turns in their real position. Do not include workflow debugging fields such as `输入来源`, `整理说明`, tool names, logs, paths, review URLs, draft IDs, or draft-stage explanations.
+Use a source-faithful editing pass:
+- Preserve actual speech order and speaker perspective. If a speaker appears multiple times, keep later turns in their real position.
+- Remove only filler words, meaningless repetition, stutters, and obvious ASR noise. Keep judgments, reasons, numbers, time points, catalysts, business terms, uncertainty, and conditions.
+- Fix confirmed ASR errors in names, tickers, product terms, English abbreviations, and numbers, but do not rewrite the speaker's logic into research-report prose.
+- Split long speech into readable paragraphs at natural pauses, topic shifts, slide/page changes, or Q&A turns. Do not create thematic summaries that were not present in the source.
+- For `上市公司交流`, put the main company and code in the meeting title, for example `广立微(301095.SZ)交流会`. Do not repeat the same main target line under every paragraph; add a `标的：` line only when a paragraph introduces other listed targets or when attribution would otherwise be unclear.
+- Do not include workflow debugging fields such as `输入来源`, `整理说明`, tool names, logs, paths, review URLs, draft IDs, or draft-stage explanations.
 
 ### 5. 排版
 

@@ -433,7 +433,9 @@ def _run_paraformer_auxiliary(
         model = AutoModel(
             model=model_ref,
             trust_remote_code=True,
-            device=_select_device("auto"),
+            # Paraformer currently hits float64 conversion errors on Apple MPS.
+            # Keep it on CPU by default; allow an explicit override for future runtimes.
+            device=_select_device(os.environ.get("PARAFORMER_DEVICE", "cpu")),
             disable_update=True,
         )
         result = model.generate(input=str(input_file), batch_size_s=60)
