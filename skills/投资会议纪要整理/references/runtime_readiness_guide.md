@@ -47,12 +47,13 @@ Strict ASR/full mode should fail if required local runtime assets are missing:
 - `librosa`
 - `docx`
 - local SenseVoice model cache
+- local Paraformer auxiliary model cache
 - the model cache path reported by the running SenseVoice service
 - review/export bridge health endpoints
 - SenseVoice transcription bridge health endpoint
 - Obsidian archive/output paths
 
-The maintained audio workflow is plain SenseVoice. Extra ASR comparison, segmentation, or speaker-identification paths are outside the current reusable skill contract.
+The maintained audio workflow is SenseVoice as the primary transcript plus Paraformer as auxiliary proofreading evidence. Paraformer output must not automatically replace the SenseVoice transcript. Extra ASR engines, diarization stacks, or unrelated segmentation paths are outside the current reusable skill contract.
 
 For a narrow ASR cache check:
 

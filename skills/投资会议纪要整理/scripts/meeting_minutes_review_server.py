@@ -93,7 +93,7 @@ DEFAULT_SENSEVOICE_MODEL_CACHE = os.environ.get(
     "SENSEVOICE_MODEL_CACHE",
     os.environ.get(
         "FUNASR_MODEL_CACHE",
-        "/Users/nananaranja/Documents/Codex/asr-model-cache",
+        str(Path.home() / ".cache/modelscope/hub"),
     ),
 )
 DEFAULT_SENSEVOICE_PYTHON = os.environ.get("SENSEVOICE_PYTHON", "")
@@ -1315,12 +1315,17 @@ def extract_docx_text(path: Path) -> str:
 def resolve_asr_model_choice(choice: str) -> dict[str, str]:
     value = str(choice or "").strip().lower()
     if "sensevoice" in value and "auto" not in value:
-        return {"engine": "sensevoice", "model": "SenseVoiceSmall", "sensevoice_model": "iic/SenseVoiceSmall", "aux_engine": ""}
+        return {
+            "engine": "sensevoice",
+            "model": "SenseVoiceSmall",
+            "sensevoice_model": "iic/SenseVoiceSmall",
+            "aux_engine": "paraformer",
+        }
     return {
         "engine": "auto",
-        "model": "自动：SenseVoiceSmall；禁止降级为其他 ASR",
+        "model": "自动：SenseVoiceSmall + Paraformer 辅助校对；禁止降级为 Whisper",
         "sensevoice_model": "iic/SenseVoiceSmall",
-        "aux_engine": "",
+        "aux_engine": "paraformer",
     }
 
 
@@ -1427,6 +1432,7 @@ def transcribe_audio_payload(path: Path, output_dir: Path, *, asr_model_choice: 
     primary_text = _read_transcript_text(primary_dir, path.stem)
     primary_json = _read_transcript_json(primary_dir, path.stem)
     speaker_segments = primary_json.get("sentence_info") if isinstance(primary_json.get("sentence_info"), list) else []
+    auxiliary_text = str(primary_json.get("auxiliary_text") or "").strip()
     payload: dict[str, Any] = {
         "ok": True,
         "primary_engine": model_config["engine"],
@@ -1434,16 +1440,18 @@ def transcribe_audio_payload(path: Path, output_dir: Path, *, asr_model_choice: 
         "text": primary_text,
         "timestamp_detected": bool(primary_json.get("timestamp_detected") or speaker_segments),
         "timestamp_segments": speaker_segments,
+        "timestamp_index": primary_json.get("timestamp_index") or [],
+        "timestamp_index_path": primary_json.get("timestamp_index_path") or "",
         "speakers": primary_json.get("speakers") or [],
         "speaker_segments": speaker_segments,
         "sentence_info": speaker_segments,
-        "auxiliary_engine": "",
-        "auxiliary_model": "",
-        "auxiliary_text": "",
-        "auxiliary_ok": False,
-        "auxiliary_status": "",
-        "asr_comparison_diff": "",
-        "auxiliary_transcripts": {},
+        "auxiliary_engine": primary_json.get("auxiliary_engine") or "",
+        "auxiliary_model": primary_json.get("auxiliary_model") or "",
+        "auxiliary_text": auxiliary_text,
+        "auxiliary_ok": bool(primary_json.get("auxiliary_ok")),
+        "auxiliary_status": primary_json.get("auxiliary_status") or "",
+        "asr_comparison_diff": primary_json.get("asr_comparison_diff") or "",
+        "auxiliary_transcripts": {"paraformer": auxiliary_text} if auxiliary_text else {},
     }
     return payload
 

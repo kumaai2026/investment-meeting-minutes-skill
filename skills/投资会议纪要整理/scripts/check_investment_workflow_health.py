@@ -60,7 +60,7 @@ WECHAT_LAUNCH_AGENT_PATH = Path("/Users/kumaai/Library/LaunchAgents/com.kumaai.w
 DEFAULT_ASR_RUNTIME_PYTHON = Path(
     os.environ.get(
         "SENSEVOICE_PYTHON",
-        "/Users/nananaranja/Documents/会议纪要整理/.transcribe-venv/bin/python",
+        sys.executable,
     )
 )
 
@@ -214,13 +214,13 @@ def asr_model_cache_check(*, strict: bool) -> dict[str, Any]:
     required_incomplete = {
         name: model
         for name, model in models.items()
-        if name == "sensevoice" and isinstance(model, dict) and not model.get("complete")
+        if name in {"sensevoice", "paraformer"} and isinstance(model, dict) and not model.get("complete")
     }
     if returncode == 0 and not required_incomplete:
         return check(
             "ok",
             "ASR 模型缓存",
-            "SenseVoice 必需模型缓存完整",
+            "SenseVoice 主模型和 Paraformer 辅助模型缓存完整",
             cache_root=payload.get("cache_root"),
             models=models,
         )
@@ -228,7 +228,7 @@ def asr_model_cache_check(*, strict: bool) -> dict[str, Any]:
     return check(
         status,
         "ASR 模型缓存",
-        "纯 SenseVoice 必需模型缓存不完整；运行期禁止远程查找或下载模型",
+        "SenseVoice/Paraformer 模型缓存不完整；运行期禁止远程查找或下载模型",
         cache_root=payload.get("cache_root"),
         incomplete=required_incomplete,
         stderr=stderr.strip(),
@@ -250,13 +250,13 @@ def sensevoice_service_model_cache_check(*, strict: bool) -> dict[str, Any]:
     required_incomplete = {
         model_name: model
         for model_name, model in models.items()
-        if model_name == "sensevoice" and isinstance(model, dict) and not model.get("complete")
+        if model_name in {"sensevoice", "paraformer"} and isinstance(model, dict) and not model.get("complete")
     }
     if payload.get("ok") is True and models and not required_incomplete:
         return check(
             "ok",
             name,
-            "服务使用的 SenseVoice 必需模型缓存完整",
+            "服务使用的 SenseVoice 主模型和 Paraformer 辅助模型缓存完整",
             cache_root=model_cache.get("cache_root"),
             python=model_cache.get("python"),
         )
@@ -264,7 +264,7 @@ def sensevoice_service_model_cache_check(*, strict: bool) -> dict[str, Any]:
     return check(
         status,
         name,
-        "服务使用的纯 SenseVoice 必需模型缓存不完整；运行期禁止远程下载模型",
+        "服务使用的 SenseVoice/Paraformer 模型缓存不完整；运行期禁止远程下载模型",
         cache_root=model_cache.get("cache_root"),
         python=model_cache.get("python"),
         incomplete=required_incomplete,
@@ -333,6 +333,8 @@ def sensevoice_service_smoke_check(*, strict: bool) -> dict[str, Any]:
             engine=payload.get("engine"),
             model=payload.get("model"),
             timestamp_detected=payload.get("timestamp_detected"),
+            auxiliary_ok=payload.get("auxiliary_ok"),
+            auxiliary_status=payload.get("auxiliary_status"),
             text_preview=str(payload.get("text") or "")[:80],
         )
     status = "error" if strict else "warning"
