@@ -22,6 +22,14 @@
       "required_terms": ["光模块", "800G", "存疑：英伟达供货节奏"]
     },
     {
+      "name": "音频无可靠时间戳样例",
+      "mode": "audio_unavailable_timestamp",
+      "source_mode": "audio",
+      "timestamp_mode": "unavailable",
+      "file": "audio_unavailable_timestamp.md",
+      "required_terms": ["没有可靠时间戳 anchor", "OCS"]
+    },
+    {
       "name": "多人复盘会类型样例",
       "mode": "meeting_type_review",
       "source_mode": "document",
@@ -40,7 +48,15 @@
       "mode": "meeting_type_expert_call",
       "source_mode": "document",
       "file": "expert_call.md",
-      "required_terms": ["专家交流", "问答线索", "中芯国际"]
+      "required_terms": ["专家交流", "问答线索", "设备订单"]
+    },
+    {
+      "name": "音频未提供时间戳负例",
+      "mode": "audio_missing_timestamp_negative",
+      "file": "audio_missing_timestamp_negative.md",
+      "require_audio_timestamps": true,
+      "expect_fail": true,
+      "required_error_terms": ["不允许将存疑时间戳写成未提供"]
     }
   ]
 }

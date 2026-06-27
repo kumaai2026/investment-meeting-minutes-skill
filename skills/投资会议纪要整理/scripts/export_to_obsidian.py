@@ -6,17 +6,21 @@ Export a finalized meeting note to the user's Obsidian workflow as Markdown + Wo
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import shutil
-import subprocess
 import sys
 import zipfile
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-DEFAULT_EXPORT_DIR = Path("/Users/kumaai/Documents/Codex/workspace/投资纪要工作流/01 Projects/会议纪要")
-DEFAULT_REMOTE_DIR = "gdrive:投资纪要工作流存档/投资纪要工作流"
+DEFAULT_WORKSPACE_ROOT = (
+    Path(os.environ["INVESTMENT_MINUTES_WORKSPACE"]).expanduser()
+    if os.environ.get("INVESTMENT_MINUTES_WORKSPACE")
+    else Path.home() / "Documents/会议纪要整理"
+)
+DEFAULT_EXPORT_DIR = DEFAULT_WORKSPACE_ROOT / "01 Projects/会议纪要"
 INVALID_FILENAME_CHARS = r'[\\/:*?"<>|]+'
 CJK_PATTERN = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
 
@@ -61,8 +65,6 @@ class ExportResult:
     docx_path: Path
     docx_created: bool
     docx_message: str
-    sync_created: bool
-    sync_message: str
 
 
 def sanitize_filename(name: str) -> str:
@@ -336,6 +338,27 @@ def convert_markdown_to_docx(source_md: Path, target_docx: Path) -> tuple[bool, 
                 run.font.color.rgb = RGBColor(64, 64, 64)
             idx += 1
             continue
+        if stripped.startswith("#### "):
+            paragraph = doc.add_paragraph()
+            run = paragraph.add_run(stripped[5:].strip())
+            run.bold = True
+            _style_run(run, size_pt=11)
+            run.font.color.rgb = RGBColor(31, 78, 121)
+            _set_cell_like_paragraph_shading(paragraph, "EAF2F8")
+            paragraph.paragraph_format.space_before = Pt(6)
+            paragraph.paragraph_format.space_after = Pt(3)
+            idx += 1
+            continue
+        if stripped.startswith("##### "):
+            paragraph = doc.add_paragraph()
+            run = paragraph.add_run(stripped[6:].strip())
+            run.bold = True
+            _style_run(run, size_pt=10)
+            run.font.color.rgb = RGBColor(89, 89, 89)
+            paragraph.paragraph_format.space_before = Pt(2)
+            paragraph.paragraph_format.space_after = Pt(3)
+            idx += 1
+            continue
 
         if re.match(r"^\*\*[^*]+\*\*：", stripped):
             label, value = stripped.split("：", 1)
@@ -396,42 +419,7 @@ def convert_markdown_to_docx(source_md: Path, target_docx: Path) -> tuple[bool, 
     return True, "ok"
 
 
-def sync_vault_to_gdrive(local_dir: Path, remote_dir: str | None = None) -> tuple[bool, str]:
-    sync_script = Path(__file__).with_name("sync_obsidian_to_gdrive.py")
-    if not sync_script.exists():
-        return False, f"同步脚本不存在: {sync_script}"
-
-    log_file = Path("/Users/kumaai/Library/Logs/kumaai-sync/investment-workflow-rclone-launch.log")
-    log_file.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        handle = log_file.open("a", encoding="utf-8")
-        command = [sys.executable, str(sync_script), "--local-dir", str(local_dir)]
-        if remote_dir:
-            command.extend(["--remote-dir", remote_dir])
-        subprocess.Popen(
-            command,
-            stdout=handle,
-            stderr=subprocess.STDOUT,
-            start_new_session=True,
-        )
-    except Exception as exc:
-        return False, f"Google Drive 后台同步启动失败: {exc}"
-    target = remote_dir or DEFAULT_REMOTE_DIR
-    return True, f"已触发 Google Drive 后台同步: {local_dir} -> {target}"
-
-
-def organize_archive_before_sync() -> tuple[bool, str]:
-    organizer = Path(__file__).with_name("organize_archive_by_date.py")
-    if not organizer.exists():
-        return False, f"归档整理脚本不存在: {organizer}"
-    result = subprocess.run([sys.executable, str(organizer)], text=True, capture_output=True)
-    message = (result.stdout or result.stderr or "").strip()
-    if result.returncode != 0:
-        return False, message or "归档整理失败"
-    return True, message or "归档整理完成"
-
-
-def export_note(source_file: Path, export_dir: Path, date_override: str | None, *, sync: bool = True) -> ExportResult:
+def export_note(source_file: Path, export_dir: Path, date_override: str | None) -> ExportResult:
     raw_content = source_file.read_text(encoding="utf-8")
     source_encoding_ok, source_encoding_message = validate_utf8_text_file(source_file, require_cjk=True)
     if not source_encoding_ok:
@@ -455,16 +443,6 @@ def export_note(source_file: Path, export_dir: Path, date_override: str | None, 
     docx_ok, docx_message = convert_markdown_to_docx(docx_source, docx_path)
     if docx_ok:
         docx_ok, docx_message = validate_docx_utf8(docx_path, require_cjk=True)
-    sync_ok = False
-    sync_message = "跳过同步：Markdown 或 Word 未全部生成"
-    if md_ok and docx_ok and sync:
-        archive_ok, archive_message = organize_archive_before_sync()
-        sync_remote_dir = f"{DEFAULT_REMOTE_DIR}/01 Projects/会议纪要/{meeting_date}"
-        sync_ok, sync_message = sync_vault_to_gdrive(export_dir, sync_remote_dir)
-        if not archive_ok:
-            sync_message = f"{sync_message}; 归档整理未完成: {archive_message}"
-    elif md_ok and docx_ok:
-        sync_message = "跳过同步：--no-sync"
 
     return ExportResult(
         md_path=md_path,
@@ -473,8 +451,6 @@ def export_note(source_file: Path, export_dir: Path, date_override: str | None, 
         docx_path=docx_path,
         docx_created=docx_ok,
         docx_message=docx_message,
-        sync_created=sync_ok,
-        sync_message=sync_message,
     )
 
 
@@ -483,7 +459,6 @@ def main() -> int:
     parser.add_argument("input_file", help="已整理完成的 Markdown 文件")
     parser.add_argument("--export-dir", default=str(DEFAULT_EXPORT_DIR), help=f"导出目录，默认 {DEFAULT_EXPORT_DIR}")
     parser.add_argument("--meeting-date", help="覆盖系统日期，格式 YYYY-MM-DD")
-    parser.add_argument("--no-sync", action="store_true", help="只生成本地 Markdown+Word，不触发归档整理或 Google Drive 同步")
     args = parser.parse_args()
 
     source_file = Path(args.input_file).expanduser().resolve()
@@ -492,7 +467,7 @@ def main() -> int:
         return 1
 
     export_dir = Path(args.export_dir).expanduser().resolve()
-    result = export_note(source_file, export_dir, args.meeting_date, sync=not args.no_sync)
+    result = export_note(source_file, export_dir, args.meeting_date)
 
     if result.md_created:
         print(f"Markdown: {result.md_path}")
@@ -502,10 +477,6 @@ def main() -> int:
         print(f"Word: {result.docx_path}")
     else:
         print(f"Word: 未生成 ({result.docx_message})")
-    if result.sync_created:
-        print(f"Google Drive: {result.sync_message}")
-    else:
-        print(f"Google Drive: 未同步 ({result.sync_message})")
     return 0
 
 

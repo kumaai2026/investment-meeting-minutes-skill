@@ -6,13 +6,19 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-DEFAULT_FINAL_ROOT = Path("/Users/kumaai/Documents/Codex/workspace/投资纪要工作流/01 Projects/会议纪要")
+DEFAULT_WORKSPACE_ROOT = (
+    Path(os.environ["INVESTMENT_MINUTES_WORKSPACE"]).expanduser()
+    if os.environ.get("INVESTMENT_MINUTES_WORKSPACE")
+    else Path.home() / "Documents/会议纪要整理"
+)
+DEFAULT_FINAL_ROOT = DEFAULT_WORKSPACE_ROOT / "01 Projects/会议纪要"
 
 
 def markdown_field(markdown: str, field: str, fallback: str = "") -> str:
@@ -183,12 +189,13 @@ def generate_artifacts(
     final_note_path: Path,
     *,
     output_dir: Path | None = None,
+    final_root: Path | None = None,
     require_final_root: bool = True,
 ) -> dict[str, Any]:
     path = final_note_path.expanduser().resolve()
-    final_root = DEFAULT_FINAL_ROOT.resolve()
-    if require_final_root and final_root not in path.parents and path.parent != final_root:
-        raise ValueError(f"final note must be under {final_root}")
+    resolved_final_root = (final_root or DEFAULT_FINAL_ROOT).expanduser().resolve()
+    if require_final_root and resolved_final_root not in path.parents and path.parent != resolved_final_root:
+        raise ValueError(f"final note must be under {resolved_final_root}")
     markdown = path.read_text(encoding="utf-8")
     segments = split_final_note(markdown)
     generated_at = datetime.now().isoformat(timespec="seconds")
@@ -227,11 +234,15 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="从人工确认后的终稿生成结构化摘要和标的表格")
     parser.add_argument("final_note", help="Obsidian 正式归档 Markdown 路径")
     parser.add_argument("--output-dir", default="", help="默认写入终稿同目录 .derived/")
+    parser.add_argument("--final-root", default=str(DEFAULT_FINAL_ROOT), help="正式纪要根目录；默认从 INVESTMENT_MINUTES_WORKSPACE 推导")
+    parser.add_argument("--no-final-root-check", action="store_true", help="跳过终稿必须位于正式纪要根目录下的保护检查")
     parser.add_argument("--json", action="store_true", help="输出 JSON")
     args = parser.parse_args()
     result = generate_artifacts(
         Path(args.final_note),
         output_dir=Path(args.output_dir) if args.output_dir else None,
+        final_root=Path(args.final_root),
+        require_final_root=not args.no_final_root_check,
     )
     if args.json:
         print(json.dumps(result, ensure_ascii=False, indent=2))

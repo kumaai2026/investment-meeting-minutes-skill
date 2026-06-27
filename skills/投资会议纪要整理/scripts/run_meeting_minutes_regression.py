@@ -33,7 +33,22 @@ def run_case(case: dict[str, Any], base_dir: Path) -> dict[str, Any]:
         required_terms=[str(term) for term in case.get("required_terms", [])],
         source_mode=str(case.get("source_mode") or case.get("mode") or "auto"),
         require_audio_timestamps=bool(case.get("require_audio_timestamps")),
+        timestamp_mode=str(case.get("timestamp_mode") or "auto"),
     )
+    raw_ok = bool(result["ok"])
+    expect_fail = bool(case.get("expect_fail"))
+    required_error_terms = [str(term) for term in case.get("required_error_terms", [])]
+    error_text = "\n".join(str(error) for error in result.get("errors", []))
+    expectation_errors: list[str] = []
+    if expect_fail:
+        if raw_ok:
+            expectation_errors.append("负例应失败但实际通过")
+        for term in required_error_terms:
+            if term not in error_text:
+                expectation_errors.append(f"负例缺少预期错误片段: {term}")
+        result["ok"] = not expectation_errors
+        result["expected_failure"] = raw_ok is False
+        result["expectation_errors"] = expectation_errors
     result = {
         "name": case.get("name") or file_path.stem,
         "mode": case.get("mode") or "",
@@ -49,8 +64,14 @@ def print_text(results: list[dict[str, Any]]) -> None:
         print(f"[{status}] {result['name']} ({result['mode']})")
         for warning in result["warnings"]:
             print(f"  warning: {warning}")
+        expected_failure = bool(result.get("expected_failure"))
         for error in result["errors"]:
-            print(f"  error: {error}")
+            if expected_failure:
+                print(f"  expected failure matched: {error}")
+            else:
+                print(f"  error: {error}")
+        for error in result.get("expectation_errors", []):
+            print(f"  expectation-error: {error}")
 
 
 def main() -> int:

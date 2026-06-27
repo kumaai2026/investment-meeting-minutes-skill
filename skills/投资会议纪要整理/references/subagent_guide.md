@@ -1,6 +1,6 @@
 # Subagent Guide
 
-默认使用单主流程；只有当来源长、噪音重、冲突多、多标的混杂或事实风险高时才启用 subagent。最终 Markdown、Word、归档输出和同步 payload 只能由主流程生成。
+默认使用单主流程；只有当来源长、噪音重、冲突多、多标的混杂或事实风险高时才启用 subagent。最终 Markdown、Word 和归档输出只能由主流程生成。
 
 ## 架构
 
@@ -16,7 +16,7 @@ Subagent 可以输出中间产物，例如：
 - 存疑项核验记录。
 - 遗漏检查 findings。
 
-Subagent 不得直接写最终 Markdown、Word、归档文件或知识库同步内容。
+Subagent 不得直接写最终 Markdown、Word 或归档文件。
 
 ## Transcript Auditor
 
@@ -61,7 +61,7 @@ Failure types:
 
 Required handling:
 - Do not block low-risk document-only work only because subagent is unavailable.
-- For high-risk audio/Dify jobs, record the failure and continue only if the main workflow can complete equivalent checks.
+- For high-risk audio jobs, record the failure and continue only if the main workflow can complete equivalent checks.
 - If subagent output adds unsupported content, discard that part and rely on source evidence.
 - If source conflict remains unresolved, keep source wording, mark doubtful terms, and preserve human confirmation entry.
 

@@ -353,7 +353,7 @@ def _format_speaker_transcript(sentences: list[dict[str, object]]) -> str:
     return "\n".join(line for line in lines if line).strip()
 
 
-def _build_timestamp_index(sentences: list[dict[str, object]]) -> list[dict[str, object]]:
+def _build_timestamp_index(sentences: list[dict[str, object]], *, source_prefix: str = "sensevoice") -> list[dict[str, object]]:
     index: list[dict[str, object]] = []
     for offset, item in enumerate(sentences):
         text = str(item.get("text") or "").strip()
@@ -372,12 +372,21 @@ def _build_timestamp_index(sentences: list[dict[str, object]]) -> list[dict[str,
                 "chunk_index": item.get("chunk_index", 0),
                 "text": text,
                 "speaker": item.get("speaker", ""),
-                "source": source if source.startswith("sensevoice") else f"sensevoice_{source}",
+                "source": source if source.startswith(source_prefix) else f"{source_prefix}_{source}",
                 "precision": "sentence" if has_precise_time else "segment",
                 "index": offset,
             }
         )
     return index
+
+
+def _timestamp_index_has_usable_time(index: list[dict[str, object]]) -> bool:
+    for item in index:
+        if str(item.get("start_ms") or "").strip() and str(item.get("end_ms") or "").strip():
+            return True
+        if str(item.get("start") or "").strip() and str(item.get("end") or "").strip():
+            return True
+    return False
 
 
 def _text_diff_preview(primary_text: str, auxiliary_text: str, *, limit: int = 120) -> str:
@@ -436,8 +445,10 @@ def _run_paraformer_auxiliary(
             device=_select_device("auto"),
             disable_update=True,
         )
-        result = model.generate(input=str(input_file), batch_size_s=60)
+        result = model.generate(input=str(input_file), batch_size_s=60, sentence_timestamp=True)
         text = _extract_model_text(result)
+        sentence_info = _extract_sentence_info(result)
+        timestamp_index = _build_timestamp_index(sentence_info, source_prefix="paraformer")
     except Exception as exc:  # noqa: BLE001
         return {
             "engine": "paraformer",
@@ -452,7 +463,10 @@ def _run_paraformer_auxiliary(
         "model": model_name,
         "ok": True,
         "text": text,
-        "status": "Paraformer 辅助转写完成；仅作为校对证据，不自动覆盖 SenseVoice 主转写。",
+        "timestamp_detected": _timestamp_index_has_usable_time(timestamp_index),
+        "sentence_info": sentence_info,
+        "timestamp_index": timestamp_index,
+        "status": "Paraformer 辅助转写完成；仅作为校对和时间戳证据，不自动覆盖 SenseVoice 主转写。",
     }
 
 
@@ -510,9 +524,9 @@ def _run_sensevoice(
 
     speaker_sentences = _extract_sentence_info(result)
     output_text = _format_speaker_transcript(speaker_sentences) or _extract_model_text(result)
-    timestamp_index = _build_timestamp_index(speaker_sentences)
-    if not timestamp_index and output_text:
-        timestamp_index = [
+    sensevoice_timestamp_index = _build_timestamp_index(speaker_sentences, source_prefix="sensevoice")
+    if not sensevoice_timestamp_index and output_text:
+        sensevoice_timestamp_index = [
             {
                 "start": "",
                 "end": "",
@@ -544,11 +558,25 @@ def _run_sensevoice(
             return 1
 
     stem = input_file.stem
+    paraformer_timestamp_index = (
+        auxiliary.get("timestamp_index") if isinstance(auxiliary.get("timestamp_index"), list) else []
+    )
+    timestamp_index_source = "sensevoice"
+    timestamp_index = sensevoice_timestamp_index
+    if paraformer_timestamp_index and _timestamp_index_has_usable_time(paraformer_timestamp_index):
+        timestamp_index = paraformer_timestamp_index
+        timestamp_index_source = "paraformer"
+
     if output_format in {"txt", "all"}:
         (output_dir / f"{stem}.txt").write_text(output_text + "\n", encoding="utf-8")
         if auxiliary.get("ok") and auxiliary.get("text"):
             (output_dir / f"{stem}.paraformer.txt").write_text(
                 str(auxiliary.get("text")).strip() + "\n",
+                encoding="utf-8",
+            )
+        if paraformer_timestamp_index:
+            (output_dir / f"{stem}.paraformer.timestamp_index.json").write_text(
+                json.dumps(paraformer_timestamp_index, ensure_ascii=False, indent=2, default=str),
                 encoding="utf-8",
             )
     if timestamp_index:
@@ -564,11 +592,15 @@ def _run_sensevoice(
             "input": str(input_file),
             "text": output_text,
             "model_cache": _model_cache_report(),
-            "timestamp_detected": bool(speaker_sentences),
+            "timestamp_detected": _timestamp_index_has_usable_time(timestamp_index),
             "speakers": sorted({str(item.get("speaker")) for item in speaker_sentences if item.get("speaker")}),
             "sentence_info": speaker_sentences,
             "timestamp_index": timestamp_index,
             "timestamp_index_path": str(output_dir / f"{stem}.timestamp_index.json") if timestamp_index else "",
+            "timestamp_index_source": timestamp_index_source,
+            "sensevoice_timestamp_index": sensevoice_timestamp_index,
+            "paraformer_timestamp_detected": bool(auxiliary.get("timestamp_detected")),
+            "paraformer_timestamp_index": paraformer_timestamp_index,
             "auxiliary_engine": auxiliary.get("engine") or "",
             "auxiliary_model": auxiliary.get("model") or "",
             "auxiliary_text": auxiliary.get("text") or "",

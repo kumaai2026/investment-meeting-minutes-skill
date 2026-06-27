@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
 import re
 import sys
 from dataclasses import asdict, dataclass
@@ -13,7 +14,12 @@ from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Iterable
 
-DEFAULT_SYMBOL_ROOT = Path("/Users/kumaai/Documents/Codex/workspace/投资纪要工作流/03 Resources/market-symbols")
+DEFAULT_WORKSPACE_ROOT = (
+    Path(os.environ["INVESTMENT_MINUTES_WORKSPACE"]).expanduser()
+    if os.environ.get("INVESTMENT_MINUTES_WORKSPACE")
+    else Path.home() / "Documents/会议纪要整理"
+)
+DEFAULT_SYMBOL_ROOT = DEFAULT_WORKSPACE_ROOT / "03 Resources/market-symbols"
 DEFAULT_ALIAS_PATH = DEFAULT_SYMBOL_ROOT / "company_aliases.csv"
 
 
@@ -110,7 +116,7 @@ def load_symbol_rows(root: Path) -> list[dict[str, str]]:
     return load_a_share(root) + load_hk(root) + load_us(root)
 
 
-def candidate_from_alias(query: str, aliases: list[dict[str, str]]) -> list[Candidate]:
+def candidate_from_alias(query: str, aliases: list[dict[str, str]], *, alias_path: Path) -> list[Candidate]:
     normalized_query = normalize_text(query)
     candidates: list[Candidate] = []
     for row in aliases:
@@ -131,7 +137,7 @@ def candidate_from_alias(query: str, aliases: list[dict[str, str]]) -> list[Cand
                 market=(row.get("market") or "alias").strip(),
                 confidence=confidence,
                 match_type=match_type,
-                source=str(DEFAULT_ALIAS_PATH),
+                source=str(alias_path),
             )
         )
     return candidates
@@ -189,7 +195,7 @@ def query_symbols(
     rows = rows if rows is not None else load_symbol_rows(root)
     aliases = aliases if aliases is not None else load_aliases(alias_path)
     candidates: list[Candidate] = []
-    candidates.extend(candidate_from_alias(query, aliases))
+    candidates.extend(candidate_from_alias(query, aliases, alias_path=alias_path))
     for row in rows:
         if not market_allowed(row["market"], market):
             continue

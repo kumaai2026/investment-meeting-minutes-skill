@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tiny local HTTP bridge for Dify -> SenseVoice transcription."""
+"""Tiny local HTTP bridge for SenseVoice transcription."""
 
 from __future__ import annotations
 
@@ -18,7 +18,6 @@ DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
 SCRIPT_DIR = Path(__file__).resolve().parent
 TRANSCRIBE_SCRIPT = SCRIPT_DIR / "transcribe_audio.py"
-LOG_DIR = Path("/Users/kumaai/Library/Logs/kumaai-sync")
 DEFAULT_PRIMARY_ENGINE = "sensevoice"
 DEFAULT_PRIMARY_MODEL = "iic/SenseVoiceSmall"
 DEFAULT_AUXILIARY_ENGINE = "paraformer"
@@ -244,7 +243,7 @@ class SenseVoiceHandler(BaseHTTPRequestHandler):
 
         filename = _clean_filename(file_item.filename)
         suffix = Path(filename).suffix or ".audio"
-        with tempfile.TemporaryDirectory(prefix="sensevoice-dify-") as tmp:
+        with tempfile.TemporaryDirectory(prefix="sensevoice-local-") as tmp:
             tmp_dir = Path(tmp)
             audio_path = tmp_dir / f"input{suffix}"
             audio_path.write_bytes(file_item.file.read())
