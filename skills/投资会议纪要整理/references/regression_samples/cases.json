@@ -11,8 +11,19 @@
       "name": "音频转写-only 样例",
       "mode": "audio_only",
       "file": "audio_only.md",
+      "verification_file": "audio_only.verification.json",
+      "require_verification": true,
       "require_audio_timestamps": true,
       "required_terms": ["北美算力", "15万元一吨", "十七八倍"]
+    },
+    {
+      "name": "verification sidecar 缺字段负例",
+      "mode": "audio_bad_verification_negative",
+      "file": "audio_only.md",
+      "verification_file": "audio_bad_verification.verification.json",
+      "require_verification": true,
+      "expect_fail": true,
+      "required_error_terms": ["缺少字段"]
     },
     {
       "name": "音频+文稿 样例",
@@ -57,6 +68,30 @@
       "require_audio_timestamps": true,
       "expect_fail": true,
       "required_error_terms": ["不允许将存疑时间戳写成未提供"]
+    },
+    {
+      "name": "可靠音频正文缺 inline 时间戳负例",
+      "mode": "audio_missing_inline_timestamp_negative",
+      "file": "audio_missing_inline_timestamp_negative.md",
+      "require_audio_timestamps": true,
+      "expect_fail": true,
+      "required_error_terms": ["必须补充存疑时间戳"]
+    },
+    {
+      "name": "可靠音频非法时间戳负例",
+      "mode": "audio_invalid_timestamp_negative",
+      "file": "audio_invalid_timestamp_negative.md",
+      "require_audio_timestamps": true,
+      "expect_fail": true,
+      "required_error_terms": ["存疑时间戳格式必须为"]
+    },
+    {
+      "name": "文稿误写存疑时间戳负例",
+      "mode": "document_inline_timestamp_negative",
+      "source_mode": "document",
+      "file": "document_inline_timestamp_negative.md",
+      "expect_fail": true,
+      "required_error_terms": ["不应出现存疑时间戳"]
     }
   ]
 }

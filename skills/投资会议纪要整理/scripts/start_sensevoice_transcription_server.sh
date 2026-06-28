@@ -2,12 +2,16 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DEFAULT_MODEL_CACHE="${HOME}/Documents/Codex/asr-model-cache"
 
 export PYTHONUTF8="${PYTHONUTF8:-1}"
 export PYTHONIOENCODING="${PYTHONIOENCODING:-utf-8}"
-export FUNASR_MODEL_CACHE="${FUNASR_MODEL_CACHE:-${HOME}/.cache/modelscope/hub}"
-export MODELSCOPE_CACHE="${MODELSCOPE_CACHE:-${HOME}/.cache/modelscope/hub}"
-export HF_HOME="${HF_HOME:-${HOME}/.cache/huggingface}"
+if [[ -z "${SENSEVOICE_MODEL_CACHE:-}" ]]; then
+  export SENSEVOICE_MODEL_CACHE="${FUNASR_MODEL_CACHE:-${DEFAULT_MODEL_CACHE}}"
+fi
+export FUNASR_MODEL_CACHE="${FUNASR_MODEL_CACHE:-${SENSEVOICE_MODEL_CACHE}}"
+export MODELSCOPE_CACHE="${MODELSCOPE_CACHE:-${SENSEVOICE_MODEL_CACHE}/modelscope}"
+export HF_HOME="${HF_HOME:-${SENSEVOICE_MODEL_CACHE}/huggingface}"
 export SENSEVOICE_BRIDGE_AUX_ENGINE="${SENSEVOICE_BRIDGE_AUX_ENGINE:-}"
 export KUMAAI_SYNC_LOG_DIR="${KUMAAI_SYNC_LOG_DIR:-${HOME}/Library/Logs/kumaai-sync}"
 export PATH="${HOME}/Documents/会议纪要整理/.transcribe-venv/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${PATH:-}"

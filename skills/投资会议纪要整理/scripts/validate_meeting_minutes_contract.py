@@ -60,6 +60,17 @@ FORBIDDEN_WORD_TEXT = [
 ]
 MEETING_TYPES = {"多人复盘会", "上市公司交流", "专家交流"}
 QUESTION_LINE_RE = re.compile(r"^\*\*【[^】\n]+】\*\*\s*$", re.MULTILINE)
+SINGLE_TIMESTAMP_RE = re.compile(r"^(?:\d{1,2}:[0-5]\d|\d{1,2}:[0-5]\d:[0-5]\d)$")
+VERIFICATION_REQUIRED_FIELDS = [
+    "原始表述",
+    "存疑类型",
+    "当前判断",
+    "候选项",
+    "是否需要 sidecar",
+    "上下文依据",
+    "检索/证据路径",
+    "最终处理",
+]
 
 
 def body_section(markdown: str) -> str:
@@ -206,7 +217,7 @@ def markdown_bold_terms(markdown: str) -> list[str]:
     return terms
 
 
-def docx_paragraph_text(path: Path) -> tuple[str, list[dict[str, Any]]]:
+def docx_paragraph_text(path: Path) -> tuple[str, list[dict[str, Any]], list[list[list[str]]]]:
     try:
         from docx import Document
     except ImportError as exc:
@@ -215,20 +226,42 @@ def docx_paragraph_text(path: Path) -> tuple[str, list[dict[str, Any]]]:
     document = Document(str(path))
     paragraphs: list[str] = []
     runs: list[dict[str, Any]] = []
+    tables: list[list[list[str]]] = []
     for paragraph in document.paragraphs:
         paragraphs.append(paragraph.text)
         for run in paragraph.runs:
             if run.text:
                 runs.append({"text": run.text, "bold": bool(run.bold), "underline": bool(run.underline)})
     for table in document.tables:
+        table_rows: list[list[str]] = []
         for row in table.rows:
+            row_values: list[str] = []
             for cell in row.cells:
+                row_values.append(cell.text.strip())
                 paragraphs.append(cell.text)
                 for paragraph in cell.paragraphs:
                     for run in paragraph.runs:
                         if run.text:
                             runs.append({"text": run.text, "bold": bool(run.bold), "underline": bool(run.underline)})
-    return "\n".join(paragraphs), runs
+            table_rows.append(row_values)
+        tables.append(table_rows)
+    return "\n".join(paragraphs), runs, tables
+
+
+def table_contains_fields(table: list[list[str]], fields: list[str]) -> bool:
+    cells = [cell.strip().rstrip("：:") for row in table for cell in row]
+    return all(field in cells for field in fields)
+
+
+def first_row_matches(table: list[list[str]], headers: list[str]) -> bool:
+    return bool(table) and [cell.strip() for cell in table[0]] == headers
+
+
+def markdown_ambiguity_headers(markdown: str) -> list[str]:
+    table_lines = ambiguity_table_lines(markdown)
+    if not table_lines:
+        return []
+    return [cell.strip() for cell in table_lines[0].strip("|").split("|")]
 
 
 def validate_word_contract(docx_path: Path, markdown: str | None = None) -> dict[str, Any]:
@@ -238,7 +271,7 @@ def validate_word_contract(docx_path: Path, markdown: str | None = None) -> dict
         return {"ok": False, "errors": [f"Word 文件不存在: {docx_path}"], "warnings": []}
 
     try:
-        text, runs = docx_paragraph_text(docx_path)
+        text, runs, tables = docx_paragraph_text(docx_path)
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "errors": [f"Word 文件无法打开: {exc}"], "warnings": []}
 
@@ -252,6 +285,11 @@ def validate_word_contract(docx_path: Path, markdown: str | None = None) -> dict
         errors.append("Word 未检测到中文内容")
 
     if markdown:
+        if not any(table_contains_fields(table, REQUIRED_METADATA_FIELDS) for table in tables):
+            errors.append("Word 元信息必须使用真正表格，并包含会议日期、整理时间、会议标题、会议类型、会议系列")
+        ambiguity_headers = markdown_ambiguity_headers(markdown)
+        if ambiguity_headers and not any(first_row_matches(table, ambiguity_headers) for table in tables):
+            errors.append(f"Word 存疑表必须使用真正表格，并包含表头: {' | '.join(ambiguity_headers)}")
         for term in markdown_bold_terms(markdown):
             matched = any(term in run["text"] and run["bold"] and run["underline"] for run in runs)
             if not matched:
@@ -263,7 +301,59 @@ def validate_word_contract(docx_path: Path, markdown: str | None = None) -> dict
         "warnings": warnings,
         "paragraph_count": text.count("\n") + 1 if text else 0,
         "run_count": len(runs),
+        "table_count": len(tables),
     }
+
+
+def read_verification_records(path: Path) -> list[dict[str, Any]]:
+    if path.suffix == ".jsonl":
+        records: list[dict[str, Any]] = []
+        for line in path.read_text(encoding="utf-8").splitlines():
+            stripped = line.strip()
+            if not stripped:
+                continue
+            item = json.loads(stripped)
+            if not isinstance(item, dict):
+                raise ValueError("JSONL 每行必须是 object")
+            records.append(item)
+        return records
+
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if isinstance(payload, list):
+        records = payload
+    elif isinstance(payload, dict):
+        records = payload.get("records")
+    else:
+        raise ValueError("verification JSON 顶层必须是 object 或 list")
+    if not isinstance(records, list):
+        raise ValueError("verification JSON 必须包含 records 数组，或顶层直接为数组")
+    if not all(isinstance(item, dict) for item in records):
+        raise ValueError("verification records 中每条记录必须是 object")
+    return records
+
+
+def validate_verification_sidecar(verification_path: Path | None, *, require_verification: bool = False) -> dict[str, Any]:
+    errors: list[str] = []
+    warnings: list[str] = []
+    if verification_path is None:
+        if require_verification:
+            errors.append("已要求 verification sidecar，但未传入 --verification")
+        return {"ok": not errors, "errors": errors, "warnings": warnings, "record_count": 0}
+    if not verification_path.exists():
+        return {"ok": False, "errors": [f"verification sidecar 不存在: {verification_path}"], "warnings": [], "record_count": 0}
+
+    try:
+        records = read_verification_records(verification_path)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+        return {"ok": False, "errors": [f"verification sidecar 无法读取或解析: {exc}"], "warnings": [], "record_count": 0}
+
+    if require_verification and not records:
+        errors.append("已要求 verification sidecar，但 records 为空")
+    for index, record in enumerate(records, start=1):
+        missing = [field for field in VERIFICATION_REQUIRED_FIELDS if field not in record]
+        if missing:
+            errors.append(f"verification 第 {index} 条缺少字段: {', '.join(missing)}")
+    return {"ok": not errors, "errors": errors, "warnings": warnings, "record_count": len(records)}
 
 
 def audio_timestamp_fallbacks(markdown: str) -> list[str]:
@@ -280,9 +370,54 @@ def audio_timestamp_fallbacks(markdown: str) -> list[str]:
     return findings
 
 
+def is_valid_timestamp_value(value: str) -> bool:
+    normalized = re.sub(r"\s+", "", value.strip())
+    if not normalized:
+        return False
+    parts = normalized.split("-")
+    if len(parts) not in {1, 2}:
+        return False
+    return all(SINGLE_TIMESTAMP_RE.match(part) for part in parts)
+
+
+def invalid_inline_timestamp_markers(markdown: str) -> list[str]:
+    findings: list[str] = []
+    for match in re.finditer(r"存疑时间戳[:：]([^）\n]+)", markdown):
+        value = match.group(1).strip()
+        if is_valid_timestamp_value(value):
+            continue
+        start = max(0, match.start() - 40)
+        end = min(len(markdown), match.end() + 60)
+        findings.append(re.sub(r"\s+", " ", markdown[start:end]).strip())
+    return findings
+
+
+def invalid_table_timestamp_values(markdown: str, headers: list[str]) -> list[str]:
+    if "时间戳" not in headers:
+        return []
+    timestamp_index = headers.index("时间戳")
+    original_index = headers.index("原始表述") if "原始表述" in headers else 0
+    findings: list[str] = []
+    for line in ambiguity_table_lines(markdown)[2:]:
+        if _is_separator_line(line):
+            continue
+        cells = [cell.strip() for cell in line.strip("|").split("|")]
+        if _is_placeholder_ambiguity_row(cells, original_index):
+            continue
+        value = cells[timestamp_index].strip() if timestamp_index < len(cells) else ""
+        if not is_valid_timestamp_value(value):
+            findings.append(line)
+    return findings
+
+
 def contains_timestamp_markers(markdown: str) -> list[str]:
     findings: list[str] = []
-    for pattern in (r"存疑时间戳[:：]", r"(?m)^\|\s*时间戳\s*\|", r"(?m)^\|\s*(?:\d{1,2}:)?\d{1,2}:\d{2}\s*\|", r"(?m)^\|\s*未提供\s*\|"):
+    for pattern in (
+        r"存疑时间戳[:：]",
+        r"(?m)^\|\s*时间戳\s*\|",
+        r"(?m)^\|\s*(?:\d{1,2}:)?\d{1,2}:\d{2}(?:\s*-\s*(?:\d{1,2}:)?\d{1,2}:\d{2})?\s*\|",
+        r"(?m)^\|\s*未提供\s*\|",
+    ):
         for match in re.finditer(pattern, markdown):
             start = max(0, match.start() - 40)
             end = min(len(markdown), match.end() + 60)
@@ -395,6 +530,7 @@ def validate_contract(
     warnings: list[str] = []
     normalized_source_mode = normalize_source_mode(source_mode)
     normalized_timestamp_mode = normalize_timestamp_mode(timestamp_mode, require_audio_timestamps)
+    ambiguity_headers: list[str] = []
 
     stripped = markdown.lstrip()
     if not stripped.startswith("# "):
@@ -438,6 +574,7 @@ def validate_contract(
             errors.append("存疑与待确认章节存在时必须包含 Markdown 表格；无存疑内容时应省略整节")
         else:
             headers = [cell.strip() for cell in table_lines[0].strip("|").split("|")]
+            ambiguity_headers = headers
             allowed_headers = expected_ambiguity_headers(normalized_source_mode, normalized_timestamp_mode)
             if headers not in allowed_headers:
                 errors.append(f"存疑与待确认表格表头必须固定为: {format_allowed_headers(allowed_headers)}")
@@ -448,11 +585,23 @@ def validate_contract(
                 preview = "；".join(manual_confirmation_rows[:4])
                 errors.append(f"人工确认列必须存在于最后且保持空白，供人工填写: {preview}")
 
-    if normalized_source_mode == "audio" and normalized_timestamp_mode != "unavailable":
+    if normalized_source_mode == "document" or normalized_timestamp_mode == "unavailable":
+        timestamp_markers = contains_timestamp_markers(markdown)
+        if timestamp_markers:
+            preview = "；".join(timestamp_markers[:4])
+            errors.append(f"文稿或无可靠时间戳模式不应出现存疑时间戳或时间戳列: {preview}")
+
+    invalid_inline_timestamps = invalid_inline_timestamp_markers(markdown)
+    invalid_table_timestamps = invalid_table_timestamp_values(markdown, ambiguity_headers)
+    if invalid_inline_timestamps or invalid_table_timestamps:
+        preview = "；".join((invalid_inline_timestamps + invalid_table_timestamps)[:4])
+        errors.append(f"存疑时间戳格式必须为 MM:SS、HH:MM:SS 或同格式范围: {preview}")
+
+    if normalized_timestamp_mode == "reliable":
         missing_body_timestamps = body_bold_terms_missing_timestamps(markdown)
         if missing_body_timestamps:
             preview = "、".join(missing_body_timestamps[:8])
-            warnings.append(f"正文加粗存疑词后建议补充存疑时间戳: {preview}")
+            errors.append(f"可靠音频模式下正文加粗存疑词后必须补充存疑时间戳: {preview}")
 
     if normalized_source_mode == "audio" or normalized_timestamp_mode == "reliable":
         fallback_timestamps = audio_timestamp_fallbacks(markdown)
@@ -475,6 +624,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="校验会议纪要 Markdown 是否符合当前输出契约")
     parser.add_argument("markdown_file", help="待校验 Markdown 文件")
     parser.add_argument("--word", help="可选：同时校验对应导出 Word 文件")
+    parser.add_argument("--verification", help="可选：同时校验同 stem 的 verification JSON/JSONL 结构")
+    parser.add_argument("--require-verification", action="store_true", help="要求 verification sidecar 存在且至少包含一条记录")
     parser.add_argument("--require-term", action="append", default=[], help="必须保留的关键原文锚点，可重复")
     parser.add_argument(
         "--source-mode",
@@ -516,6 +667,16 @@ def main() -> int:
         result["errors"].extend(word_result["errors"])
         result["warnings"].extend(word_result["warnings"])
         result["ok"] = result["ok"] and word_result["ok"]
+    if args.verification or args.require_verification:
+        verification_path = Path(args.verification).expanduser() if args.verification else None
+        verification_result = validate_verification_sidecar(
+            verification_path,
+            require_verification=args.require_verification,
+        )
+        result["verification"] = verification_result
+        result["errors"].extend(verification_result["errors"])
+        result["warnings"].extend(verification_result["warnings"])
+        result["ok"] = result["ok"] and verification_result["ok"]
     if args.json:
         print(json.dumps(result, ensure_ascii=False, indent=2))
     else:

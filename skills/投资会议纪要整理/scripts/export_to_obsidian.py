@@ -23,6 +23,7 @@ DEFAULT_WORKSPACE_ROOT = (
 DEFAULT_EXPORT_DIR = DEFAULT_WORKSPACE_ROOT / "01 Projects/会议纪要"
 INVALID_FILENAME_CHARS = r'[\\/:*?"<>|]+'
 CJK_PATTERN = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
+METADATA_TABLE_FIELDS = {"会议日期", "整理时间", "会议标题", "会议类型", "会议系列", "会议标的"}
 
 
 def validate_utf8_text_file(path: Path, *, require_cjk: bool = False) -> tuple[bool, str]:
@@ -166,6 +167,16 @@ def is_separator_row(cells: list[str]) -> bool:
     return all(cell and set(cell) <= {"-", ":", " "} for cell in cells)
 
 
+def parse_metadata_line(line: str) -> tuple[str, str] | None:
+    match = re.match(r"^\*\*([^*\n]+)\*\*[:：]\s*(.*?)\s*$", line.strip())
+    if not match:
+        return None
+    label = match.group(1).strip()
+    if label not in METADATA_TABLE_FIELDS:
+        return None
+    return label, match.group(2).strip()
+
+
 def _add_docx_runs(paragraph, text: str) -> None:
     cursor = 0
     for match in re.finditer(r"\*\*(.+?)\*\*", text):
@@ -273,6 +284,29 @@ def _format_table(table) -> None:
                 _set_cell_shading(cell, "F6F8FB")
 
 
+def _format_metadata_table(table) -> None:
+    from docx.enum.table import WD_TABLE_ALIGNMENT, WD_CELL_VERTICAL_ALIGNMENT
+    from docx.shared import Pt, RGBColor
+
+    table.alignment = WD_TABLE_ALIGNMENT.CENTER
+    table.autofit = True
+    for row_idx, row in enumerate(table.rows):
+        for col_idx, cell in enumerate(row.cells):
+            cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+            for paragraph in cell.paragraphs:
+                paragraph.paragraph_format.space_after = Pt(0)
+                paragraph.paragraph_format.line_spacing = 1.05
+                for run in paragraph.runs:
+                    _set_run_font(run, size_pt=9)
+                    if col_idx == 0:
+                        run.bold = True
+                        run.font.color.rgb = RGBColor(255, 255, 255)
+            if col_idx == 0:
+                _set_cell_shading(cell, "1F4E79")
+            elif row_idx % 2 == 1:
+                _set_cell_shading(cell, "F6F8FB")
+
+
 def convert_markdown_to_docx(source_md: Path, target_docx: Path) -> tuple[bool, str]:
     try:
         from docx import Document
@@ -358,6 +392,24 @@ def convert_markdown_to_docx(source_md: Path, target_docx: Path) -> tuple[bool, 
             paragraph.paragraph_format.space_before = Pt(2)
             paragraph.paragraph_format.space_after = Pt(3)
             idx += 1
+            continue
+
+        metadata_rows: list[tuple[str, str]] = []
+        probe = idx
+        while probe < len(lines):
+            parsed = parse_metadata_line(lines[probe].strip())
+            if not parsed:
+                break
+            metadata_rows.append(parsed)
+            probe += 1
+        if metadata_rows:
+            table = doc.add_table(rows=len(metadata_rows), cols=2)
+            table.style = "Table Grid"
+            for row_idx, (label, value) in enumerate(metadata_rows):
+                _add_docx_runs(table.rows[row_idx].cells[0].paragraphs[0], label)
+                _add_docx_runs(table.rows[row_idx].cells[1].paragraphs[0], value)
+            _format_metadata_table(table)
+            idx = probe
             continue
 
         if re.match(r"^\*\*[^*]+\*\*：", stripped):

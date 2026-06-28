@@ -53,7 +53,7 @@ python3 scripts/check_investment_workflow_health.py --profile full --strict
 - SenseVoice 转写 bridge 健康检查接口
 - 本地输入、临时、输出路径
 
-当前维护的音频工作流是：SenseVoice 作为主转写和时间戳来源，Paraformer 只作为辅助校对和时间戳证据。Paraformer 结果不得自动替换 SenseVoice 主转写。额外 ASR 引擎、说话人分离、无关分段路径不属于当前基础 skill 合约，只有用户明确要求时才启用。
+当前维护的音频工作流是：SenseVoice 作为主转写来源，Paraformer 只作为辅助校对和时间戳证据。`timestamp_index.json` 可由脚本在 SenseVoice 与 Paraformer 可用时间戳 anchor 间选择，并记录 `timestamp_index_source`。Paraformer 结果不得自动替换 SenseVoice 主转写。额外 ASR 引擎、说话人分离、无关分段路径不属于当前基础 skill 合约，只有用户明确要求时才启用。
 
 只检查 ASR 缓存时使用：
 
@@ -97,7 +97,7 @@ python3 scripts/check_investment_workflow_health.py --profile export --prepare-l
 - 设置 `INVESTMENT_MINUTES_WORKSPACE` 作为会议纪要工作流根目录；原始输入和最终输出目录都从该根目录推导。
 - 当 Markdown/Word 检查需要使用非系统默认 `python3` 时，设置 `INVESTMENT_MINUTES_PYTHON`。
 - 当 ASR 检查需要使用独立转写运行时时，设置 `SENSEVOICE_PYTHON`。
-- 模型缓存优先使用 `SENSEVOICE_MODEL_CACHE`；未设置时使用 `FUNASR_MODEL_CACHE`，再退回 `$HOME/.cache/modelscope/hub`。
+- 模型缓存优先使用 `SENSEVOICE_MODEL_CACHE`；未设置时使用 `FUNASR_MODEL_CACHE`，再退回 `$HOME/Documents/Codex/asr-model-cache`。
 - 日志和访问控制等用户级配置应使用 `$HOME/...`、环境变量或 CLI 参数，不应写入 reusable artifact 的私有绝对路径。
 
 skill 包内应保留：

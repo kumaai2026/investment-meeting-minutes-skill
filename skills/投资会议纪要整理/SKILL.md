@@ -20,8 +20,8 @@ Use the fastest safe path for the source risk. The default path is a single fina
 - Run profile: prefer `fast_document` for short, clean document-only sources; use `standard` for ordinary meetings; use `strict_audio` for long audio, audio/document conflicts, or high-risk facts.
 - Meeting type: default to `多人复盘会`. Use `上市公司交流` only for a single-company special meeting. Use `专家交流` only for expert Q&A. Do not create `其他`.
 - Output format: follow `references/output_contract.md` for shared structure, ambiguity-table columns, and Word style; follow the matching meeting-type reference for body structure: `references/meeting_types/review_meeting.md`, `references/meeting_types/listed_company.md`, or `references/meeting_types/expert_call.md`.
-- Doubtful items: non-person doubtful content must run the stable verification prompt in `references/verification_policy.md`.
-- Validators: keep validation to encoding, Markdown/Word structure, and regression samples. Do not add content-direction validators or Subagent-output validators.
+- Doubtful items: use one internal `doubtful_items` list as the source for verification, final table rows, and any same-stem verification sidecar. Keep final table columns in `references/output_contract.md`; keep process details in `references/verification_policy.md`.
+- Validators: keep validation to encoding, Markdown/Word structure, and regression samples. Do not add content-direction validators, semantic-consistency hard checks, or Subagent-output validators.
 
 ## Workflow
 
@@ -80,9 +80,10 @@ Rules:
 - Start from meeting context before choosing a company, ticker, term, customer, supplier, number, date, or event.
 - Confirm company names and stock codes before writing them as facts, following `references/verification_policy.md`. Local candidates and ASR output are clues, not proof.
 - Batch local candidate lookup before live verification when several names appear, for example `scripts/query_symbol_candidates.py --batch-file terms.txt --json`. Use `a-stock-data` live sources when available; use `scripts/query_symbol_candidates.py` only as a candidate generator.
-- If a non-person item cannot be confirmed, keep the source wording, mark the doubtful fragment, and put it in `## 二、存疑与待确认`.
+- Build and verify `doubtful_items` with the fields, type values, person/business split, and sidecar rules in `references/verification_policy.md`. If a non-person item cannot be confirmed, keep the source wording, mark the doubtful fragment, and keep it in the list for `## 二、存疑与待确认`.
 - For audio/video or timestamped transcript sources, locate each doubtful fragment against `timestamp_index.json` before writing `## 二、存疑与待确认`. Use `HH:MM:SS-HH:MM:SS` when the fragment matches a timestamped sentence or phrase. If only a lower-precision segment is known, use the best available segment or chunk range such as `00:03:00-00:04:00`. If the source is text/document-only or no reliable audio anchor exists, use the no-timestamp table shape and do not write a timestamp column.
 - Do not estimate ambiguity timestamps from the relative position of cleaned notes, summaries, or edited paragraphs.
+- Derive final rows and any `.verification.json` or `.verification.jsonl` only from `doubtful_items`; if they conflict, fix the shared list and regenerate both artifacts instead of adding validator hard rules.
 - Ignore pure person-name uncertainty unless it changes an investment fact or attribution.
 
 Use the Content Integrity Reviewer Subagent when target attribution, multi-target headings, high-risk facts, doubtful-item verification, or omission checks would materially reduce errors.

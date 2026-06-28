@@ -14,7 +14,7 @@ SKILL_DIR = SCRIPT_DIR.parent
 DEFAULT_CASES_PATH = SKILL_DIR / "references/regression_samples/cases.json"
 
 sys.path.insert(0, str(SCRIPT_DIR))
-from validate_meeting_minutes_contract import validate_contract  # noqa: E402
+from validate_meeting_minutes_contract import validate_contract, validate_verification_sidecar  # noqa: E402
 
 
 def read_cases(path: Path) -> list[dict[str, Any]]:
@@ -35,6 +35,16 @@ def run_case(case: dict[str, Any], base_dir: Path) -> dict[str, Any]:
         require_audio_timestamps=bool(case.get("require_audio_timestamps")),
         timestamp_mode=str(case.get("timestamp_mode") or "auto"),
     )
+    if case.get("verification_file") or case.get("require_verification"):
+        verification_path = base_dir / str(case["verification_file"]) if case.get("verification_file") else None
+        verification_result = validate_verification_sidecar(
+            verification_path,
+            require_verification=bool(case.get("require_verification")),
+        )
+        result["verification"] = verification_result
+        result["errors"].extend(verification_result["errors"])
+        result["warnings"].extend(verification_result["warnings"])
+        result["ok"] = result["ok"] and verification_result["ok"]
     raw_ok = bool(result["ok"])
     expect_fail = bool(case.get("expect_fail"))
     required_error_terms = [str(term) for term in case.get("required_error_terms", [])]

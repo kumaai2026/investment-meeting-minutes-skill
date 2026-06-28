@@ -13,7 +13,7 @@
 - `发言整理` 默认是可复核原文纪要，不输出摘要、压缩稿或研报化改写；每段标题覆盖该段提到的全部标的，不强制一个标的一段。
 - 三类会议分别以 `references/meeting_types/` 下的 reference 作为正文格式依据。
 - 非人名存疑项统一调用 `references/verification_policy.md` 中的稳定核验 prompt。
-- Validator 只检查格式、章节、表头、Word 样式、编码和样例回归，不伪验证联网核验是否真实发生。
+- Validator 检查格式、章节、表头、Word 样式、编码、样例回归，以及可选 verification 审计 artifact 的结构完整性；它不伪验证联网核验是否真实发生。
 
 ## Skill 包内容
 
@@ -46,13 +46,14 @@ export INVESTMENT_MINUTES_WORKSPACE="$HOME/Documents/会议纪要整理"
 python3 skills/投资会议纪要整理/scripts/validate_utf8_text.py README.md skills/*/SKILL.md --require-cjk --portable-skill
 python3 skills/投资会议纪要整理/scripts/run_meeting_minutes_regression.py --json
 python3 skills/投资会议纪要整理/scripts/validate_meeting_minutes_contract.py NOTE.md --json
+python3 skills/投资会议纪要整理/scripts/validate_meeting_minutes_contract.py NOTE.md --verification NOTE.verification.json --require-verification --json
 python3 skills/投资会议纪要整理/scripts/validate_meeting_minutes_contract.py NOTE.md --word NOTE.docx --json
 python3 skills/投资会议纪要整理/scripts/check_investment_workflow_health.py --profile asr --strict
 python3 skills/投资会议纪要整理/scripts/check_investment_workflow_health.py --profile document
 python3 skills/投资会议纪要整理/scripts/check_investment_workflow_health.py --profile export
 ```
 
-`validate_meeting_minutes_contract.py` 的规则是：必须有会议元信息和 `## 一、发言整理`；按 `会议类型` 检查对应 reference 的必要格式；只有存在真实存疑时才输出 `## 二、存疑与待确认`；存疑表必须使用固定表头并保留空白 `人工确认` 列；传入 `--word` 时同时检查 Word 导出结构和存疑词样式。
+`validate_meeting_minutes_contract.py` 的规则是：必须有会议元信息和 `## 一、发言整理`；按 `会议类型` 检查对应 reference 的必要格式；只有存在真实存疑时才输出 `## 二、存疑与待确认`；存疑表必须使用固定表头并保留空白 `人工确认` 列；可靠音频模式要求正文存疑词紧跟合法 `存疑时间戳`；传入 `--verification`/`--require-verification` 时检查非人名存疑项的旁路审计记录；传入 `--word` 时同时检查 Word 导出结构和存疑词样式。
 
 ## 隐私边界
 

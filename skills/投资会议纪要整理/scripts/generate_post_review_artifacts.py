@@ -50,26 +50,27 @@ def split_final_note(markdown: str) -> list[dict[str, Any]]:
     body = markdown[body_start:doubt_start if doubt_start >= 0 else len(markdown)] if body_start >= 0 else markdown
     segments: list[dict[str, Any]] = []
     current_speaker = "未标注发言人"
-    current_heading = ""
+    current_target = ""
+    current_board = ""
     buffer: list[str] = []
 
+    def heading_text(line: str, prefix: str) -> str:
+        value = line.removeprefix(prefix).strip()
+        if value.startswith("【") and "】" in value:
+            return value[1 : value.find("】")].strip()
+        return value
+
     def flush() -> None:
-        nonlocal buffer, current_heading
+        nonlocal buffer
         text = "\n".join(buffer).strip()
         if not text:
             return
-        board = ""
-        target = "-"
-        match = re.match(r"【([^｜】]+)(?:｜([^】]+))?】", current_heading)
-        if match:
-            board = match.group(1).strip()
-            target = (match.group(2) or "-").strip()
         segments.append(
             {
                 "speaker": current_speaker,
-                "heading": current_heading,
-                "board": board,
-                "target": target,
+                "heading": current_target,
+                "board": current_board,
+                "target": current_target or "-",
                 "text": text,
                 "numbers": number_tokens(text),
                 "has_doubt": "**" in text,
@@ -82,17 +83,27 @@ def split_final_note(markdown: str) -> list[dict[str, Any]]:
         if line.startswith("### "):
             flush()
             current_speaker = line[4:].strip() or current_speaker
-            current_heading = ""
+            current_target = ""
+            current_board = ""
+            continue
+        if line.startswith("#### "):
+            flush()
+            current_target = heading_text(line, "#### ")
+            current_board = ""
+            continue
+        if line.startswith("##### "):
+            flush()
+            current_board = heading_text(line, "##### ")
             continue
         if line.startswith("【") and "】" in line:
             flush()
             close = line.find("】")
-            current_heading = line[: close + 1].strip()
+            current_target = line[1:close].strip()
             rest = line[close + 1 :].strip()
             if rest:
                 buffer.append(rest)
             continue
-        if line.strip() and not line.startswith("## "):
+        if line.strip() and line.strip() != "---" and not line.startswith("## "):
             buffer.append(line)
     flush()
     return segments

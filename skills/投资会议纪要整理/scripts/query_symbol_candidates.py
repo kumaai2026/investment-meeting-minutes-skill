@@ -204,16 +204,13 @@ def query_symbols(
             candidates.append(candidate)
 
     ranked = dedupe(candidate for candidate in candidates if market_allowed(candidate.market, market))[:limit]
-    top = ranked[0] if ranked else None
-    runner_up = ranked[1] if len(ranked) > 1 else None
-    confirmed = bool(top and top.confidence >= 0.92 and (runner_up is None or top.confidence - runner_up.confidence >= 0.05))
-    status = "confirmed" if confirmed else ("ambiguous" if ranked else "not_found")
+    status = "candidate_only" if ranked else "not_found"
     return {
         "query": query,
         "market": market,
         "status": status,
-        "confirmed": confirmed,
-        "recommendation": asdict(top) if top and confirmed else None,
+        "confirmed": False,
+        "recommendation": None,
         "candidates": [asdict(candidate) for candidate in ranked],
     }
 
@@ -237,16 +234,14 @@ def print_batch_text(payloads: list[dict[str, object]]) -> None:
 def print_text(payload: dict[str, object]) -> None:
     print(f"查询: {payload['query']}")
     print(f"状态: {payload['status']}")
-    recommendation = payload.get("recommendation")
-    if recommendation:
-        item = recommendation
-        print(f"建议写入: {item['name']}({item['symbol']})")
     for item in payload["candidates"]:  # type: ignore[index]
         print(
             f"- {item['symbol']} | {item['name']} | {item['market']} | "
             f"{item['confidence']:.2f} | {item['match_type']}"
         )
-    if payload["status"] != "confirmed":
+    if payload["status"] == "candidate_only":
+        print("处理建议: 仅作候选线索；使用外部证据核验后才能写入确认代码，未核验前保留存疑。")
+    else:
         print("处理建议: 不要直接写入代码；放入“存疑与待确认”或补充人工校对参考。")
 
 
