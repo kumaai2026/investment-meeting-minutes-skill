@@ -1,6 +1,20 @@
 {
   "cases": [
     {
+      "name": "subagent 任一触发规则文档检查",
+      "mode": "reference_subagent_dispatch",
+      "check": "text_contains",
+      "file": "../subagent_guide.md",
+      "required_terms": ["只要满足任一高风险条件", "triggered_by", "skipped_reason", "不要等到所有条件同时满足"]
+    },
+    {
+      "name": "输出合约标题逃逸与时间戳精度文档检查",
+      "mode": "reference_output_contract",
+      "check": "text_contains",
+      "file": "../output_contract.md",
+      "required_terms": ["契约外逃逸标题", "sentence/phrase 级 anchor", "segment/chunk/minute 级范围"]
+    },
+    {
       "name": "文本-only 样例",
       "mode": "text_only",
       "source_mode": "document",
@@ -14,6 +28,8 @@
       "verification_file": "audio_only.verification.json",
       "require_verification": true,
       "require_audio_timestamps": true,
+      "timestamp_index_file": "timestamp_index_sentence.json",
+      "timestamp_index_require_reliable": true,
       "required_terms": ["北美算力", "15万元一吨", "十七八倍"]
     },
     {
@@ -41,11 +57,107 @@
       "required_terms": ["没有可靠时间戳 anchor", "OCS"]
     },
     {
+      "name": "低精度时间戳误用负例",
+      "mode": "audio_low_precision_timestamp_negative",
+      "file": "audio_low_precision_timestamp_negative.md",
+      "require_audio_timestamps": true,
+      "timestamp_index_file": "timestamp_index_low_precision_negative.json",
+      "timestamp_index_require_reliable": true,
+      "expect_fail": true,
+      "required_error_terms": ["低精度 chunk 不得作为可靠存疑时间戳"]
+    },
+    {
+      "name": "短 SenseVoice VAD segment 存疑时间戳样例",
+      "mode": "timestamp_index_sensevoice_vad_segment",
+      "file": "audio_only.md",
+      "timestamp_index_file": "timestamp_index_sensevoice_vad_segment.json",
+      "timestamp_index_require_reliable": true,
+      "required_terms": ["北美算力"]
+    },
+    {
+      "name": "过长 SenseVoice VAD segment 负例",
+      "mode": "timestamp_index_sensevoice_vad_segment_long_negative",
+      "file": "audio_only.md",
+      "timestamp_index_file": "timestamp_index_sensevoice_vad_segment_long_negative.json",
+      "timestamp_index_require_reliable": true,
+      "expect_fail": true,
+      "required_error_terms": ["duration_ms"]
+    },
+    {
       "name": "多人复盘会类型样例",
       "mode": "meeting_type_review",
       "source_mode": "document",
       "file": "review_meeting.md",
       "required_terms": ["多人复盘会", "真实顺序", "中际旭创", "我今天还是围绕", "我没有减仓", "不想改成别的说法"]
+    },
+    {
+      "name": "发言人标题上下文识别样例",
+      "mode": "speaker_identity_context",
+      "source_mode": "document",
+      "file": "speaker_identity_context.md",
+      "required_terms": ["### 科技研究员", "### 发言人2", "我是科技研究员", "暂时听不出身份"]
+    },
+    {
+      "name": "主题伪装发言人标题负例",
+      "mode": "speaker_heading_theme_negative",
+      "source_mode": "document",
+      "file": "speaker_heading_theme_negative.md",
+      "expect_fail": true,
+      "required_error_terms": ["发言人标题不是标的或主题标题"]
+    },
+    {
+      "name": "多人复盘会缺标的标题 warning 样例",
+      "mode": "review_missing_heading_warning",
+      "source_mode": "document",
+      "file": "review_missing_heading_warning.md",
+      "required_warning_terms": ["缺少相邻标的标题"],
+      "required_terms": ["不应该阻断导出"]
+    },
+    {
+      "name": "标题逃逸负例",
+      "mode": "escape_heading_negative",
+      "source_mode": "document",
+      "file": "escape_heading_negative.md",
+      "expect_fail": true,
+      "required_error_terms": ["契约外逃逸标题"]
+    },
+    {
+      "name": "人称改写负例",
+      "mode": "pronoun_rewrite_negative",
+      "source_mode": "document",
+      "file": "pronoun_rewrite_negative.md",
+      "required_terms": ["我没有减仓"],
+      "forbidden_terms": ["发言人1认为", "发言人认为"],
+      "expect_fail": true,
+      "required_error_terms": ["缺少样例关键锚点", "包含样例禁止锚点"]
+    },
+    {
+      "name": "总结化整理负例",
+      "mode": "summary_compression_negative",
+      "source_mode": "document",
+      "file": "summary_compression_negative.md",
+      "required_terms": ["我对存储方向继续看好", "我的仓位不想一次性加满"],
+      "forbidden_terms": ["总结来看", "发言人主要"],
+      "expect_fail": true,
+      "required_error_terms": ["缺少样例关键锚点", "包含样例禁止锚点"]
+    },
+    {
+      "name": "口水词清理边界样例",
+      "mode": "filler_cleanup",
+      "source_mode": "document",
+      "file": "filler_cleanup.md",
+      "required_terms": ["我觉得", "可能", "仓位先不追太满"],
+      "forbidden_terms": ["呃", "然后然后", "那个那个"]
+    },
+    {
+      "name": "口水词过度清理负例",
+      "mode": "filler_cleanup_overreach_negative",
+      "source_mode": "document",
+      "file": "filler_cleanup_overreach_negative.md",
+      "required_terms": ["我觉得", "可能", "仓位先不追太满"],
+      "forbidden_terms": ["总结来看"],
+      "expect_fail": true,
+      "required_error_terms": ["缺少样例关键锚点", "包含样例禁止锚点"]
     },
     {
       "name": "上市公司交流类型样例",

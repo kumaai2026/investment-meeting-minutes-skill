@@ -40,6 +40,35 @@ FORBIDDEN_PATTERNS = [
     r"(?m)^###\s*问答\s*\d+",
     r"(?im)^\s*A[:：]",
 ]
+FORBIDDEN_ESCAPE_HEADINGS = {
+    "发言片段",
+    "未归类",
+    "主题整理",
+    "内容摘要",
+    "观点汇总",
+    "核心观点",
+    "整体判断",
+    "整理者总结",
+    "投研摘要",
+    "投资结论",
+}
+REVIEW_SPEAKER_HEADING_TOPIC_TERMS = {
+    "AI硬件",
+    "半导体",
+    "存储",
+    "核心观点",
+    "科技",
+}
+REVIEW_SPEAKER_ROLE_TERMS = {
+    "CEO",
+    "CFO",
+    "嘉宾",
+    "专家",
+    "分析师",
+    "主持人",
+    "研究员",
+    "管理层",
+}
 
 DOCUMENT_ONLY_SOURCE_MODES = {"document", "document-only", "text", "text-only", "文稿", "纯文本"}
 AUDIO_SOURCE_MODES = {"audio", "audio-only", "audio-text", "audio+text", "音频", "音频转写", "文稿+音频"}
@@ -71,6 +100,10 @@ VERIFICATION_REQUIRED_FIELDS = [
     "检索/证据路径",
     "最终处理",
 ]
+TIMESTAMP_INDEX_REQUIRED_FIELDS = ["source", "precision", "text", "start", "end", "start_ms", "end_ms"]
+RELIABLE_TIMESTAMP_PRECISIONS = {"sentence", "phrase"}
+LOW_TIMESTAMP_PRECISIONS = {"segment", "chunk", "unavailable"}
+MAX_RELIABLE_VAD_SEGMENT_MS = 10000
 
 
 def body_section(markdown: str) -> str:
@@ -83,7 +116,7 @@ def body_section(markdown: str) -> str:
 
 
 def body_subheadings(markdown: str) -> list[str]:
-    return re.findall(r"^###\s*(.+?)\s*$", body_section(markdown), re.MULTILINE)
+    return re.findall(r"^###(?!#)\s*(.+?)\s*$", body_section(markdown), re.MULTILINE)
 
 
 def bold_question_lines(markdown: str) -> list[re.Match[str]]:
@@ -121,12 +154,14 @@ def validate_meeting_type_reference(markdown: str, meeting_type: str) -> list[st
     if meeting_type == "多人复盘会":
         if not subheadings:
             errors.append("多人复盘会必须按发言轮次使用三级发言人标题")
+        topic_headings = review_speaker_heading_topic_findings(subheadings)
+        if topic_headings:
+            preview = "；".join(topic_headings[:4])
+            errors.append(f"发言人标题不是标的或主题标题: {preview}")
         if "标的：" in body:
             errors.append("多人复盘会小段标题不使用 标的： 前缀，应使用【标的(代码)】标题行")
         if "后半段" in body:
             errors.append("多人复盘会同一发言人再次发言时保留同名标题，不使用（后半段）")
-        if "#### 【" not in body:
-            errors.append("多人复盘会小段必须保留标的行；无明确标的时使用空标的行 #### 【】")
     elif meeting_type == "上市公司交流":
         title = markdown_field(markdown, "会议标题")
         if title and not title.endswith("公司交流会议"):
@@ -151,6 +186,69 @@ def validate_meeting_type_reference(markdown: str, meeting_type: str) -> list[st
             preview = "；".join(missing_answers[:4])
             errors.append(f"专家交流每个问题后必须保留对应回答: {preview}")
     return errors
+
+
+def review_speaker_heading_topic_findings(subheadings: list[str]) -> list[str]:
+    findings: list[str] = []
+    for heading in subheadings:
+        normalized = re.sub(r"[\s｜|、/／：:（）()【】]+", "", heading)
+        if not normalized:
+            continue
+        if any(role in normalized for role in REVIEW_SPEAKER_ROLE_TERMS):
+            continue
+        if any(term in normalized for term in REVIEW_SPEAKER_HEADING_TOPIC_TERMS):
+            findings.append(f"### {heading}")
+    return findings
+
+
+def forbidden_escape_heading_findings(markdown: str) -> list[str]:
+    findings: list[str] = []
+    for match in re.finditer(r"(?m)^(#{2,6})\s*(.+?)\s*$", markdown):
+        heading = match.group(2).strip()
+        normalized = re.sub(r"\s+", "", heading.strip(" #"))
+        if normalized in FORBIDDEN_ESCAPE_HEADINGS:
+            findings.append(match.group(0).strip())
+    return findings
+
+
+def review_meeting_heading_warnings(markdown: str, meeting_type: str) -> list[str]:
+    if meeting_type != "多人复盘会":
+        return []
+    body = body_section(markdown)
+    if not body:
+        return []
+
+    warnings: list[str] = []
+    current_speaker = ""
+    has_target_heading = False
+    has_sector_heading = False
+    for raw_line in body.splitlines():
+        line = raw_line.strip()
+        if not line or line == "---" or line.startswith("|"):
+            continue
+        if line.startswith("### "):
+            current_speaker = line.removeprefix("### ").strip()
+            has_target_heading = False
+            has_sector_heading = False
+            continue
+        if line.startswith("#### "):
+            has_target_heading = True
+            has_sector_heading = False
+            continue
+        if line.startswith("##### "):
+            has_sector_heading = True
+            continue
+        if line.startswith("#"):
+            continue
+        speaker_hint = f"{current_speaker}：" if current_speaker else ""
+        preview = line[:50]
+        if not has_target_heading:
+            warnings.append(f"多人复盘会正文段落缺少相邻标的标题，建议复核: {speaker_hint}{preview}")
+        elif not has_sector_heading:
+            warnings.append(f"多人复盘会正文段落缺少相邻板块标题，建议复核: {speaker_hint}{preview}")
+        if len(warnings) >= 4:
+            break
+    return warnings
 
 
 def metadata_field_present(markdown: str, field: str) -> bool:
@@ -356,6 +454,145 @@ def validate_verification_sidecar(verification_path: Path | None, *, require_ver
     return {"ok": not errors, "errors": errors, "warnings": warnings, "record_count": len(records)}
 
 
+def read_timestamp_index_records(path: Path) -> list[dict[str, Any]]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if isinstance(payload, list):
+        records = payload
+    elif isinstance(payload, dict):
+        records = payload.get("timestamp_index") or payload.get("records")
+    else:
+        raise ValueError("timestamp_index JSON 顶层必须是 object 或 list")
+    if not isinstance(records, list):
+        raise ValueError("timestamp_index JSON 必须包含 timestamp_index/records 数组，或顶层直接为数组")
+    if not all(isinstance(item, dict) for item in records):
+        raise ValueError("timestamp_index 中每条记录必须是 object")
+    return records
+
+
+def _timestamp_index_record_is_used_for_doubtful(record: dict[str, Any]) -> bool:
+    for field in ("used_for_doubtful", "selected_for_ambiguity", "selected_for_doubtful"):
+        if bool(record.get(field)):
+            return True
+    return bool(str(record.get("doubtful_term") or "").strip())
+
+
+def _timestamp_record_ms(record: dict[str, Any], field: str) -> int | None:
+    try:
+        return int(round(float(record.get(field))))
+    except (TypeError, ValueError):
+        return None
+
+
+def _timestamp_record_is_reliable_for_doubtful(record: dict[str, Any]) -> bool:
+    precision = str(record.get("precision") or "").strip().lower()
+    source = str(record.get("source") or "").strip().lower()
+    if precision in RELIABLE_TIMESTAMP_PRECISIONS:
+        return True
+    if precision == "segment" and source == "sensevoice_vad_segment":
+        start_ms = _timestamp_record_ms(record, "start_ms")
+        end_ms = _timestamp_record_ms(record, "end_ms")
+        if start_ms is None or end_ms is None:
+            return False
+        duration_ms = end_ms - start_ms
+        return 0 < duration_ms <= MAX_RELIABLE_VAD_SEGMENT_MS
+    return False
+
+
+def validate_timestamp_index_records(
+    records: list[dict[str, Any]],
+    *,
+    require_reliable: bool = False,
+) -> dict[str, Any]:
+    errors: list[str] = []
+    warnings: list[str] = []
+    reliable_count = 0
+    selected_count = 0
+    for index, record in enumerate(records, start=1):
+        missing = [field for field in TIMESTAMP_INDEX_REQUIRED_FIELDS if field not in record]
+        if missing:
+            errors.append(f"timestamp_index 第 {index} 条缺少字段: {', '.join(missing)}")
+        precision = str(record.get("precision") or "").strip().lower()
+        used_for_doubtful = _timestamp_index_record_is_used_for_doubtful(record)
+        if used_for_doubtful:
+            selected_count += 1
+        if _timestamp_record_is_reliable_for_doubtful(record):
+            reliable_count += 1
+        if precision in RELIABLE_TIMESTAMP_PRECISIONS:
+            for field in ("start", "end", "start_ms", "end_ms"):
+                if str(record.get(field) or "").strip() == "":
+                    errors.append(f"timestamp_index 第 {index} 条句级/短句级 anchor 缺少 {field}")
+        elif precision == "segment":
+            source = str(record.get("source") or "").strip().lower()
+            if source != "sensevoice_vad_segment":
+                errors.append(f"timestamp_index 第 {index} 条低精度 segment 不得作为可靠存疑时间戳；只有短 VAD segment 可用")
+            else:
+                start_ms = _timestamp_record_ms(record, "start_ms")
+                end_ms = _timestamp_record_ms(record, "end_ms")
+                if start_ms is None or end_ms is None:
+                    errors.append(f"timestamp_index 第 {index} 条短 VAD segment start_ms/end_ms 必须为数字")
+                else:
+                    duration_ms = end_ms - start_ms
+                    if duration_ms <= 0:
+                        errors.append(f"timestamp_index 第 {index} 条短 VAD segment duration_ms 必须大于 0")
+                    elif duration_ms > MAX_RELIABLE_VAD_SEGMENT_MS:
+                        errors.append(
+                            f"timestamp_index 第 {index} 条短 VAD segment duration_ms 超过 10000: {duration_ms}"
+                        )
+        elif precision in LOW_TIMESTAMP_PRECISIONS:
+            if used_for_doubtful:
+                errors.append(f"timestamp_index 第 {index} 条低精度 {precision} 不得作为可靠存疑时间戳")
+        elif precision:
+            warnings.append(f"timestamp_index 第 {index} 条 precision 未知，建议复核: {precision}")
+        elif require_reliable:
+            errors.append(f"timestamp_index 第 {index} 条缺少 precision")
+
+        if require_reliable and used_for_doubtful:
+            if not _timestamp_record_is_reliable_for_doubtful(record):
+                errors.append(
+                    f"timestamp_index 第 {index} 条被标记用于存疑，但不是 sentence/phrase 或短 VAD segment: {precision or '空'}"
+                )
+
+    if require_reliable and records and reliable_count == 0:
+        errors.append("要求可靠时间戳时，timestamp_index 至少应包含 sentence/phrase anchor 或短 VAD segment")
+    if require_reliable and selected_count == 0:
+        warnings.append("要求可靠时间戳时，timestamp_index 未标记 used_for_doubtful/selected_for_ambiguity；仅完成字段和精度基础检查")
+    return {
+        "ok": not errors,
+        "errors": errors,
+        "warnings": warnings,
+        "record_count": len(records),
+        "reliable_count": reliable_count,
+    }
+
+
+def validate_timestamp_index_file(
+    timestamp_index_path: Path | None,
+    *,
+    require_reliable: bool = False,
+) -> dict[str, Any]:
+    if timestamp_index_path is None:
+        return {"ok": True, "errors": [], "warnings": [], "record_count": 0, "reliable_count": 0}
+    if not timestamp_index_path.exists():
+        return {
+            "ok": False,
+            "errors": [f"timestamp_index 不存在: {timestamp_index_path}"],
+            "warnings": [],
+            "record_count": 0,
+            "reliable_count": 0,
+        }
+    try:
+        records = read_timestamp_index_records(timestamp_index_path)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+        return {
+            "ok": False,
+            "errors": [f"timestamp_index 无法读取或解析: {exc}"],
+            "warnings": [],
+            "record_count": 0,
+            "reliable_count": 0,
+        }
+    return validate_timestamp_index_records(records, require_reliable=require_reliable)
+
+
 def audio_timestamp_fallbacks(markdown: str) -> list[str]:
     findings: list[str] = []
     for match in re.finditer(r"存疑时间戳：未提供", markdown):
@@ -522,6 +759,7 @@ def validate_contract(
     markdown: str,
     *,
     required_terms: list[str] | None = None,
+    forbidden_terms: list[str] | None = None,
     source_mode: str | None = None,
     require_audio_timestamps: bool = False,
     timestamp_mode: str | None = "auto",
@@ -544,6 +782,7 @@ def validate_contract(
 
     meeting_type = markdown_field(markdown, "会议类型")
     errors.extend(validate_meeting_type_reference(markdown, meeting_type))
+    warnings.extend(review_meeting_heading_warnings(markdown, meeting_type))
 
     body_position = markdown.find("## 一、发言整理")
     if body_position < 0:
@@ -555,9 +794,13 @@ def validate_contract(
     for pattern in FORBIDDEN_PATTERNS:
         if re.search(pattern, markdown):
             errors.append(f"包含禁止输出内容: {pattern}")
+    escape_headings = forbidden_escape_heading_findings(markdown)
+    if escape_headings:
+        preview = "；".join(escape_headings[:6])
+        errors.append(f"包含契约外逃逸标题: {preview}")
 
     has_body_section = "## 一、发言整理" in markdown
-    has_subheading = bool(re.search(r"^###\s+", markdown, re.MULTILINE))
+    has_subheading = bool(re.search(r"^###(?!#)\s+", markdown, re.MULTILINE))
     has_bold_question = bool(bold_question_lines(markdown))
     if has_body_section and not has_subheading and not has_bold_question:
         warnings.append("发言整理中未检测到三级发言人标题")
@@ -612,6 +855,9 @@ def validate_contract(
     for term in required_terms or []:
         if term not in markdown:
             errors.append(f"缺少样例关键锚点: {term}")
+    for term in forbidden_terms or []:
+        if term in markdown:
+            errors.append(f"包含样例禁止锚点: {term}")
 
     return {
         "ok": not errors,
@@ -626,7 +872,10 @@ def main() -> int:
     parser.add_argument("--word", help="可选：同时校验对应导出 Word 文件")
     parser.add_argument("--verification", help="可选：同时校验同 stem 的 verification JSON/JSONL 结构")
     parser.add_argument("--require-verification", action="store_true", help="要求 verification sidecar 存在且至少包含一条记录")
+    parser.add_argument("--timestamp-index", help="可选：同时校验 timestamp_index.json 字段和精度")
+    parser.add_argument("--require-reliable-timestamp-index", action="store_true", help="要求 timestamp_index 包含可用于存疑的 sentence/phrase anchor")
     parser.add_argument("--require-term", action="append", default=[], help="必须保留的关键原文锚点，可重复")
+    parser.add_argument("--forbid-term", action="append", default=[], help="样例或人工复核中不应出现的改写锚点，可重复")
     parser.add_argument(
         "--source-mode",
         choices=["auto", "document", "document-only", "text", "text-only", "audio", "audio-only", "audio-text", "audio+text"],
@@ -657,6 +906,7 @@ def main() -> int:
     result = validate_contract(
         markdown,
         required_terms=args.require_term,
+        forbidden_terms=args.forbid_term,
         source_mode=args.source_mode,
         require_audio_timestamps=args.require_audio_timestamps,
         timestamp_mode=args.timestamp_mode,
@@ -677,6 +927,15 @@ def main() -> int:
         result["errors"].extend(verification_result["errors"])
         result["warnings"].extend(verification_result["warnings"])
         result["ok"] = result["ok"] and verification_result["ok"]
+    if args.timestamp_index:
+        timestamp_index_result = validate_timestamp_index_file(
+            Path(args.timestamp_index).expanduser(),
+            require_reliable=args.require_reliable_timestamp_index,
+        )
+        result["timestamp_index"] = timestamp_index_result
+        result["errors"].extend(timestamp_index_result["errors"])
+        result["warnings"].extend(timestamp_index_result["warnings"])
+        result["ok"] = result["ok"] and timestamp_index_result["ok"]
     if args.json:
         print(json.dumps(result, ensure_ascii=False, indent=2))
     else:

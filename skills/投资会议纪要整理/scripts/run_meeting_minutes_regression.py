@@ -14,7 +14,11 @@ SKILL_DIR = SCRIPT_DIR.parent
 DEFAULT_CASES_PATH = SKILL_DIR / "references/regression_samples/cases.json"
 
 sys.path.insert(0, str(SCRIPT_DIR))
-from validate_meeting_minutes_contract import validate_contract, validate_verification_sidecar  # noqa: E402
+from validate_meeting_minutes_contract import (  # noqa: E402
+    validate_contract,
+    validate_timestamp_index_file,
+    validate_verification_sidecar,
+)
 
 
 def read_cases(path: Path) -> list[dict[str, Any]]:
@@ -27,28 +31,57 @@ def read_cases(path: Path) -> list[dict[str, Any]]:
 
 def run_case(case: dict[str, Any], base_dir: Path) -> dict[str, Any]:
     file_path = base_dir / str(case["file"])
-    markdown = file_path.read_text(encoding="utf-8")
-    result = validate_contract(
-        markdown,
-        required_terms=[str(term) for term in case.get("required_terms", [])],
-        source_mode=str(case.get("source_mode") or case.get("mode") or "auto"),
-        require_audio_timestamps=bool(case.get("require_audio_timestamps")),
-        timestamp_mode=str(case.get("timestamp_mode") or "auto"),
-    )
-    if case.get("verification_file") or case.get("require_verification"):
-        verification_path = base_dir / str(case["verification_file"]) if case.get("verification_file") else None
-        verification_result = validate_verification_sidecar(
-            verification_path,
-            require_verification=bool(case.get("require_verification")),
+    if case.get("check") == "text_contains":
+        text = file_path.read_text(encoding="utf-8")
+        errors: list[str] = []
+        warnings: list[str] = []
+        for term in [str(term) for term in case.get("required_terms", [])]:
+            if term not in text:
+                errors.append(f"缺少文本检查锚点: {term}")
+        for term in [str(term) for term in case.get("forbidden_terms", [])]:
+            if term in text:
+                errors.append(f"包含文本检查禁止锚点: {term}")
+        result: dict[str, Any] = {
+            "ok": not errors,
+            "errors": errors,
+            "warnings": warnings,
+        }
+    else:
+        markdown = file_path.read_text(encoding="utf-8")
+        result = validate_contract(
+            markdown,
+            required_terms=[str(term) for term in case.get("required_terms", [])],
+            forbidden_terms=[str(term) for term in case.get("forbidden_terms", [])],
+            source_mode=str(case.get("source_mode") or case.get("mode") or "auto"),
+            require_audio_timestamps=bool(case.get("require_audio_timestamps")),
+            timestamp_mode=str(case.get("timestamp_mode") or "auto"),
         )
-        result["verification"] = verification_result
-        result["errors"].extend(verification_result["errors"])
-        result["warnings"].extend(verification_result["warnings"])
-        result["ok"] = result["ok"] and verification_result["ok"]
+        if case.get("verification_file") or case.get("require_verification"):
+            verification_path = base_dir / str(case["verification_file"]) if case.get("verification_file") else None
+            verification_result = validate_verification_sidecar(
+                verification_path,
+                require_verification=bool(case.get("require_verification")),
+            )
+            result["verification"] = verification_result
+            result["errors"].extend(verification_result["errors"])
+            result["warnings"].extend(verification_result["warnings"])
+            result["ok"] = result["ok"] and verification_result["ok"]
+        if case.get("timestamp_index_file"):
+            timestamp_index_path = base_dir / str(case["timestamp_index_file"])
+            timestamp_index_result = validate_timestamp_index_file(
+                timestamp_index_path,
+                require_reliable=bool(case.get("timestamp_index_require_reliable")),
+            )
+            result["timestamp_index"] = timestamp_index_result
+            result["errors"].extend(timestamp_index_result["errors"])
+            result["warnings"].extend(timestamp_index_result["warnings"])
+            result["ok"] = result["ok"] and timestamp_index_result["ok"]
     raw_ok = bool(result["ok"])
     expect_fail = bool(case.get("expect_fail"))
     required_error_terms = [str(term) for term in case.get("required_error_terms", [])]
+    required_warning_terms = [str(term) for term in case.get("required_warning_terms", [])]
     error_text = "\n".join(str(error) for error in result.get("errors", []))
+    warning_text = "\n".join(str(warning) for warning in result.get("warnings", []))
     expectation_errors: list[str] = []
     if expect_fail:
         if raw_ok:
@@ -58,6 +91,12 @@ def run_case(case: dict[str, Any], base_dir: Path) -> dict[str, Any]:
                 expectation_errors.append(f"负例缺少预期错误片段: {term}")
         result["ok"] = not expectation_errors
         result["expected_failure"] = raw_ok is False
+        result["expectation_errors"] = expectation_errors
+    if not expect_fail and required_warning_terms:
+        for term in required_warning_terms:
+            if term not in warning_text:
+                expectation_errors.append(f"样例缺少预期 warning 片段: {term}")
+        result["ok"] = bool(result["ok"]) and not expectation_errors
         result["expectation_errors"] = expectation_errors
     result = {
         "name": case.get("name") or file_path.stem,

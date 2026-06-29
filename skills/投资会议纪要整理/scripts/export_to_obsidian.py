@@ -373,8 +373,12 @@ def convert_markdown_to_docx(source_md: Path, target_docx: Path) -> tuple[bool, 
             idx += 1
             continue
         if stripped.startswith("#### "):
+            target_label = stripped[5:].strip()
+            if re.fullmatch(r"【\s*】", target_label):
+                idx += 1
+                continue
             paragraph = doc.add_paragraph()
-            run = paragraph.add_run(stripped[5:].strip())
+            run = paragraph.add_run(target_label)
             run.bold = True
             _style_run(run, size_pt=11)
             run.font.color.rgb = RGBColor(31, 78, 121)

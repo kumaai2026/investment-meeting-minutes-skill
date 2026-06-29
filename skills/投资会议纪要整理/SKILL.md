@@ -7,7 +7,7 @@ description: "Use when Codex needs to turn a Chinese investment meeting recordin
 
 ## Overview
 
-Produce a strict Chinese investment meeting note from the current meeting's audio, transcript, document, or mixed materials. Preserve the speaker's meaning, validate names and stock codes before writing confirmed entities, and export the human-confirmed Markdown + Word note.
+Produce a strict Chinese investment meeting note from the current meeting's audio, transcript, document, or mixed materials. The final body is a speaker-by-speaker cleaned transcript: preserve each speaker's original order, viewpoint, pronouns, logic, uncertainty, and meaningful wording; only remove pure filler words, obvious ASR noise, meaningless repetitions, and repeated false starts. Validate names and stock codes before writing confirmed entities, and export the human-confirmed Markdown + Word note.
 
 Use the fastest safe path for the source risk. The default path is a single final writer with deterministic checks; enable Subagents only when the source is long, noisy, conflict-heavy, multi-target, or fact-sensitive. Write final Markdown, Word, and archive outputs only through the main workflow.
 
@@ -16,11 +16,13 @@ Use the fastest safe path for the source risk. The default path is a single fina
 - Workflow after input archive: 转录 -> 校对 -> 识别 -> 编辑 -> 排版.
 - Source boundary: use only current-session materials as meeting-content sources. External sources may verify names, codes, terms, or public facts, but must not add meeting content.
 - ASR: use local SenseVoiceSmall as the primary transcript model and Paraformer-Large as auxiliary proofreading plus timestamp evidence when available. Do not switch to Whisper or another ASR. If the local ASR/timestamp chain cannot run, first diagnose and repair model cache, dependencies, device compatibility, memory, or chunking; use a text-only path only when the runtime cannot be restored and the user accepts that audio review is incomplete.
-- Final writer: Subagents may produce intermediate notes, candidate blocks, verification notes, and omission findings; they must not directly write final deliverables.
+- Final writer: Subagents may produce intermediate notes, candidate blocks, verification notes, and omission findings; they must not directly write final deliverables. Subagent dispatch follows an any-risk trigger: one qualifying risk condition is enough to trigger the relevant reviewer; multiple conditions only raise priority.
 - Run profile: prefer `fast_document` for short, clean document-only sources; use `standard` for ordinary meetings; use `strict_audio` for long audio, audio/document conflicts, or high-risk facts.
 - Meeting type: default to `多人复盘会`. Use `上市公司交流` only for a single-company special meeting. Use `专家交流` only for expert Q&A. Do not create `其他`.
 - Output format: follow `references/output_contract.md` for shared structure, ambiguity-table columns, and Word style; follow the matching meeting-type reference for body structure: `references/meeting_types/review_meeting.md`, `references/meeting_types/listed_company.md`, or `references/meeting_types/expert_call.md`.
+- Speaker headings: identify speaker titles from current-session context when the source provides enough evidence, such as self-introduction, moderator address, agenda role, Q&A role, or stable transcript labels. Write the identified name or role as the `###` heading. If a speaker cannot be identified reliably, keep the fallback heading as `### 发言人1`, `### 发言人2`, `### 发言人3`, etc. in actual first-appearance order.
 - Doubtful items: use one internal `doubtful_items` list as the source for verification, final table rows, and any same-stem verification sidecar. Keep final table columns in `references/output_contract.md`; keep process details in `references/verification_policy.md`.
+- Fidelity: `## 一、发言整理` is a source-aligned cleaned transcript by speaker, not a content summary, abstract, rewrite, interpretation, or third-person retelling. Preserve source perspective and pronouns such as `我`、`我们`、`个人觉得`; do not rewrite them into `发言人认为`、`专家表示`、`管理层表示`、`公司表示` unless those words appear in the source. The only allowed cleanup is deleting pure filler words, obvious ASR noise, meaningless repetitions, and repeated false starts.
 - Validators: keep validation to encoding, Markdown/Word structure, and regression samples. Do not add content-direction validators, semantic-consistency hard checks, or Subagent-output validators.
 
 ## Workflow
@@ -31,13 +33,18 @@ Use the fastest safe path for the source risk. The default path is a single fina
 - `standard`: use for ordinary document-only or audio-plus-document work. Batch local entity/code candidate lookup first; use Subagents only for triggered risk areas.
 - `strict_audio`: use for audio-only, long/noisy meetings, audio/document conflicts, or high-risk facts. Run the relevant readiness profile before the expensive step.
 
+Before final writing, create a process-only dispatch record. Do not write this record into the final note body. Record:
+- `transcript_auditor`: triggered / not triggered, triggered_by list, skipped_reason when not triggered.
+- `content_integrity_reviewer`: triggered / not triggered, triggered_by list, skipped_reason when not triggered.
+- When a subagent is unavailable, record the failure and whether the main workflow completed equivalent checks.
+
 ### 0. Prepare Inputs
 
 Archive raw files before transcription or writing. Use `scripts/archive_raw_inputs.py`; read `references/archive_naming_contract.md` before changing archive/export naming or archive bridges.
 
 Handle source modes:
 - `audio_only`: archive, then transcribe with SenseVoice.
-- `document_only`: archive, then organize from the provided text/document.
+- `document_only`: archive, then arrange speaker turns from the provided text/document without summarizing, rewriting, or changing viewpoint.
 - `audio_plus_document`: archive both; use both as evidence and keep conflicts visible.
 
 Keep Chinese text files and generated Markdown/TXT/JSON/YAML as UTF-8 without BOM. In Python text I/O, pass `encoding="utf-8"`. If UTF-8 decoding fails or replacement characters appear, stop and report the affected file.
@@ -47,29 +54,31 @@ Keep Chinese text files and generated Markdown/TXT/JSON/YAML as UTF-8 without BO
 When audio is provided, use `scripts/transcribe_audio.py` for local SenseVoiceSmall primary transcription, Paraformer-Large auxiliary cross-checking, and timestamp-index preparation. Runtime failures are repair targets, not a reason to skip audio evidence by default.
 
 Default audio pipeline:
-1. Run SenseVoiceSmall through local FunASR as the primary ASR transcript.
+1. Run full-audio fsmn-vad once to obtain global VAD segment boundaries, then transcribe each VAD segment with SenseVoiceSmall as the primary ASR transcript.
 2. Run Paraformer-Large as an auxiliary ASR cross-check for finance terms, company names, stock codes, numbers, English abbreviations, and timestamp evidence.
 3. Do not automatically replace the SenseVoiceSmall transcript with Paraformer-Large output. Use Paraformer differences as proofreading evidence, and surface unresolved conflicts in `transcript_audit` or `suspect_confirmation`.
 4. Build a near-verbatim `aligned_transcript` from the SenseVoice primary transcript plus confirmed cross-check corrections. Do not use cleaned meeting-note prose for timestamp alignment.
-5. Prefer Paraformer timestamp output for `timestamp_index.json` when it provides usable sentence/segment anchors. If Paraformer does not expose usable timestamps, fall back to SenseVoice/FunASR timestamp output and mark the lower precision.
+5. Prefer sentence/phrase anchors when available. A short `source=sensevoice_vad_segment`, `precision=segment`, `duration_ms <= 10000` record is also reliable enough for doubtful-item replay. Other segment/chunk/minute-level ranges are not reliable final doubtful timestamps.
 6. Use the selected timestamp index as the timestamp source for ambiguity rows, preserving `source` and `precision` fields.
 
 Timestamp-index rules:
 - Do not use Whisper for transcription, fallback transcription, cross-checking, or timestamp generation.
-- Do not re-transcribe the full audio only to create timestamps. Paraformer-Large may be used for auxiliary text cross-checking and available timestamp evidence.
+- Do not run VAD separately on pre-cut 20s/60s chunks for final timestamps; VAD boundaries must come from one full-audio VAD pass.
 - `batch_size_s=60` is a runtime generation parameter, not a promise to preserve 60-second chunk artifacts.
-- `timestamp_index.json` entries should include `start`, `end`, `start_ms`, `end_ms`, `chunk_index`, `text`, `source`, and `precision` when the engine exposes them.
+- `timestamp_index.json` entries should include `start`, `end`, `start_ms`, `end_ms`, `duration_ms` when known, `chunk_index`, `text`, `source`, and `precision` when the engine exposes them.
 - `source` should distinguish `paraformer`, `sensevoice`, `sensevoice_paraformer_checked`, `fa_zh_forced_alignment`, and fallback segment sources when applicable.
 - `precision` should distinguish `sentence`, `phrase`, `segment`, `chunk`, and `unavailable`.
-- For ambiguity rows, first match the doubtful term to the Paraformer-derived timestamp index when available and output `HH:MM:SS-HH:MM:SS`. If no sentence/phrase match is available, fall back to the best available segment or chunk range and mark the source/precision as `片段级` or lower.
+- For ambiguity rows, use the same internal `doubtful_items` list for verification, inline timestamps, and the final table. First match the doubtful term to `timestamp_index.text`; output `HH:MM:SS-HH:MM:SS` only from sentence/phrase anchors or short `sensevoice_vad_segment` records. If no reliable match exists, use the no-timestamp table shape and do not write a timestamp placeholder.
 - Model downloads, dependency installation, and first-cache warmup are setup work, not formal transcription time.
 - Before first use, machine changes, or production-like audio, read `references/runtime_readiness_guide.md` and run `scripts/check_investment_workflow_health.py --profile asr --strict`. Use `--runtime-smoke` only when a real short-audio service call is needed.
 
 ### 2. 校对
 
-Use `scripts/process_transcript.py` when text is long, noisy, or missing clear speaker boundaries. Correct obvious ASR noise while preserving the speaker's viewpoint, order, uncertainty, and meaningful wording.
+Use `scripts/process_transcript.py` when text is long, noisy, or missing clear speaker boundaries. Correct obvious ASR noise and delete only pure filler words, meaningless repetitions, and repeated false starts while preserving the speaker's viewpoint, pronouns, order, uncertainty, judgment strength, numbers, timing, actions, and meaningful wording. Treat cleaned text as evidence for final writing, not as permission to summarize, rewrite, polish into report style, or change perspective.
 
-Use the Transcript Auditor Subagent when audio is long, noisy, multi-speaker, has unclear speaker boundaries, or has audio/document conflicts.
+Build a process-only speaker map before final writing. Map raw labels such as `Speaker 1` or `发言人A` to an identified name or role only when current-session content supports it. Do not infer a personal name or role from topic expertise alone. When evidence is insufficient, keep numeric fallback labels in first-appearance order.
+
+Trigger the Transcript Auditor Subagent when any one of these conditions is true: audio is long, noise is heavy, multiple-speaker boundaries are unclear, audio and document evidence conflict, or timestamp alignment is important for doubtful-item review.
 
 ### 3. Correct names and symbols
 
@@ -81,18 +90,25 @@ Rules:
 - Confirm company names and stock codes before writing them as facts, following `references/verification_policy.md`. Local candidates and ASR output are clues, not proof.
 - Batch local candidate lookup before live verification when several names appear, for example `scripts/query_symbol_candidates.py --batch-file terms.txt --json`. Use `a-stock-data` live sources when available; use `scripts/query_symbol_candidates.py` only as a candidate generator.
 - Build and verify `doubtful_items` with the fields, type values, person/business split, and sidecar rules in `references/verification_policy.md`. If a non-person item cannot be confirmed, keep the source wording, mark the doubtful fragment, and keep it in the list for `## 二、存疑与待确认`.
-- For audio/video or timestamped transcript sources, locate each doubtful fragment against `timestamp_index.json` before writing `## 二、存疑与待确认`. Use `HH:MM:SS-HH:MM:SS` when the fragment matches a timestamped sentence or phrase. If only a lower-precision segment is known, use the best available segment or chunk range such as `00:03:00-00:04:00`. If the source is text/document-only or no reliable audio anchor exists, use the no-timestamp table shape and do not write a timestamp column.
+- For audio/video or timestamped transcript sources, locate each doubtful fragment against `timestamp_index.json` before writing `## 二、存疑与待确认`. Use `HH:MM:SS-HH:MM:SS` only when the fragment matches a timestamped sentence/phrase or a short `source=sensevoice_vad_segment`, `duration_ms <= 10000` record. If the source is text/document-only or no reliable audio anchor exists, use the no-timestamp table shape and do not write a timestamp column.
 - Do not estimate ambiguity timestamps from the relative position of cleaned notes, summaries, or edited paragraphs.
 - Derive final rows and any `.verification.json` or `.verification.jsonl` only from `doubtful_items`; if they conflict, fix the shared list and regenerate both artifacts instead of adding validator hard rules.
 - Ignore pure person-name uncertainty unless it changes an investment fact or attribution.
 
-Use the Content Integrity Reviewer Subagent when target attribution, multi-target headings, high-risk facts, doubtful-item verification, or omission checks would materially reduce errors.
+Trigger the Content Integrity Reviewer Subagent when any one of these conditions is true: multiple targets are mixed, target attribution is complex, high-risk facts appear, non-person business doubtful items are numerous, or omission risk is high.
 
 ### 4. 编辑
 
-Write one unified draft. Use `references/output_contract.md` plus the matching meeting-type reference.
+Write one final speaker-ordered note. Use `references/output_contract.md` plus the matching meeting-type reference.
 
-Preserve actual speech order, speaker perspective, original logic, uncertainty, and meaningful wording for every meeting type. Do not convert the note into a summary, compressed brief, research-report section, conclusion list, or target summary table. If a speaker appears multiple times, keep later turns in their real position. Do not include workflow debugging fields such as `输入来源`, `整理说明`, tool names, logs, paths, temporary workflow links, temporary identifiers, or draft-stage explanations.
+Preserve actual speech order, speaker perspective, original logic, uncertainty, and meaningful wording for every meeting type. The final body may only remove pure filler words, obvious ASR noise, meaningless repetitions, and repeated false starts; it must not summarize, rewrite, interpret, merge separate turns, polish into research-report prose, or change first-person wording into third-person attribution. Do not convert the note into a summary, compressed brief, research-report section, conclusion list, or target summary table. If a speaker appears multiple times, keep later turns in their real position. Do not include workflow debugging fields such as `输入来源`, `整理说明`, tool names, logs, paths, temporary workflow links, temporary identifiers, or draft-stage explanations.
+
+Before export, do a source-fidelity pass against the current-session transcript or document:
+- For each substantive paragraph, confirm it maps back to a source span from the same speaker turn.
+- Preserve first-person and speaker-perspective wording when the source uses it; do not recast it into third-person attribution.
+- Keep long answers as lightly cleaned ordered prose. Split for readability only when the source naturally changes topic; do not replace them with `主要包括`、`核心观点`、`总结来看` style summaries, and do not add connective analysis that the speaker did not say.
+- If Subagent notes are more compressed than the source, use them only as omission or risk findings and write final prose from the source span.
+- Run a heading self-check against `output_contract.md` and the selected meeting-type reference. The final body must not contain contract-escape headings such as `发言片段`、`未归类`、`主题整理`、`内容摘要`、`观点汇总`; 多人复盘会 must not use a theme name as a fake speaker heading.
 
 ### 5. 排版
 

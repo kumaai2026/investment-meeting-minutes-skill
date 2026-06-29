@@ -46,6 +46,7 @@ export INVESTMENT_MINUTES_WORKSPACE="$HOME/Documents/会议纪要整理"
 python3 skills/投资会议纪要整理/scripts/validate_utf8_text.py README.md skills/*/SKILL.md --require-cjk --portable-skill
 python3 skills/投资会议纪要整理/scripts/run_meeting_minutes_regression.py --json
 python3 skills/投资会议纪要整理/scripts/validate_meeting_minutes_contract.py NOTE.md --json
+python3 skills/投资会议纪要整理/scripts/validate_meeting_minutes_contract.py NOTE.md --require-term "我没有减仓" --forbid-term "发言人认为" --json
 python3 skills/投资会议纪要整理/scripts/validate_meeting_minutes_contract.py NOTE.md --verification NOTE.verification.json --require-verification --json
 python3 skills/投资会议纪要整理/scripts/validate_meeting_minutes_contract.py NOTE.md --word NOTE.docx --json
 python3 skills/投资会议纪要整理/scripts/check_investment_workflow_health.py --profile asr --strict
@@ -53,7 +54,7 @@ python3 skills/投资会议纪要整理/scripts/check_investment_workflow_health
 python3 skills/投资会议纪要整理/scripts/check_investment_workflow_health.py --profile export
 ```
 
-`validate_meeting_minutes_contract.py` 的规则是：必须有会议元信息和 `## 一、发言整理`；按 `会议类型` 检查对应 reference 的必要格式；只有存在真实存疑时才输出 `## 二、存疑与待确认`；存疑表必须使用固定表头并保留空白 `人工确认` 列；可靠音频模式要求正文存疑词紧跟合法 `存疑时间戳`；传入 `--verification`/`--require-verification` 时检查非人名存疑项的旁路审计记录；传入 `--word` 时同时检查 Word 导出结构和存疑词样式。
+`validate_meeting_minutes_contract.py` 的规则是：必须有会议元信息和 `## 一、发言整理`；按 `会议类型` 检查对应 reference 的必要格式；只有存在真实存疑时才输出 `## 二、存疑与待确认`；存疑表必须使用固定表头并保留空白 `人工确认` 列；可靠音频模式要求正文存疑词紧跟合法 `存疑时间戳`；传入 `--require-term` / `--forbid-term` 时做样例级原文锚点保留和改写锚点拦截；传入 `--verification`/`--require-verification` 时检查非人名存疑项的旁路审计记录；传入 `--word` 时同时检查 Word 导出结构和存疑词样式。
 
 ## 隐私边界
 
